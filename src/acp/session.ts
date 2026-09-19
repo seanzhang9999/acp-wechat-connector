@@ -217,6 +217,7 @@ export class SessionManager {
   private cleanupTimer: ReturnType<typeof setInterval> | null = null;
   private opts: SessionManagerOpts;
   private aborted = false;
+  private releasing = false;
 
   constructor(opts: SessionManagerOpts) {
     this.opts = opts;
@@ -274,7 +275,38 @@ export class SessionManager {
     }
   }
 
+  assertReleasable(): void {
+    if (this.releasing || this.pendingSessions.size || this.userLifecycleChains.size ||
+        this.resetOperations.size || [...this.sessions.values(),
+          ...[...this.exitedSessions.values()].flatMap(entries => [...entries])].some(s =>
+          s.processing || s.activeMessage || s.queue.length)) {
+      throw new Error("ACP 有执行中、排队、审批或正在建立的会话；请完成后再释放。");
+    }
+  }
+
+  async releaseAll(): Promise<number> {
+    this.assertReleasable();
+    this.releasing = true;
+    const sessions = [...new Set([...this.sessions.values(),
+      ...[...this.exitedSessions.values()].flatMap(entries => [...entries])])];
+    try {
+      for (const session of sessions) {
+        session.closedError = new Error("Session released by owner");
+        session.cleanupRegistered = true;
+        this.registerSessionCleanup(session, true);
+        this.sessions.delete(session.userId);
+        this.exitedSessions.delete(session.userId);
+      }
+      // Reuse process-tree cleanup and retain failures for a later retry.
+      for (const userId of this.cleanupStates.keys()) await this.retryCleanupState(userId);
+      return sessions.length;
+    } finally {
+      this.releasing = false;
+    }
+  }
+
   async enqueue(userId: string, message: PendingMessage): Promise<void> {
+    if (this.releasing) throw new Error("正在释放会话，请稍后发送。");
     const generation = this.userGenerations.get(userId) ?? 0;
     return this.withUserLifecycle(userId, () =>
       this.enqueueUnlocked(userId, message, generation),
@@ -286,8 +318,8 @@ export class SessionManager {
     message: PendingMessage,
     generation: number,
   ): Promise<void> {
-    if (this.aborted) {
-      throw new Error("Session manager is stopped");
+    if (this.aborted || this.releasing) {
+      throw new Error("Session manager is stopped or releasing");
     }
     if (!this.isUserGenerationCurrent(userId, generation)) {
       throw new SessionResetError();

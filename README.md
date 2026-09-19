@@ -1,576 +1,122 @@
-# WeChat ACP
+# ACP WeChat Connector
 
-[![NPM Downloads](https://img.shields.io/npm/d18m/wechat-acp)](https://www.npmjs.com/package/wechat-acp)
+通过微信远程继续 Mac 上的 Codex 会话，回到电脑后再交回 Codex 桌面 App。
 
-Bridge WeChat direct messages to any ACP-compatible AI agent.
+这个项目面向个人使用：不需要引入 VS Code，也不要求微信和桌面同时控制一个会话。出门后在微信退出 Codex 桌面，选择原会话继续；回到本地前释放桥接持有的会话，再打开桌面继续工作。会话沿用同一份本地历史。
 
-`wechat-acp` logs in with the WeChat iLink bot API, polls incoming 1:1 messages, forwards them to an ACP agent over stdio, and sends the agent reply back to WeChat.
+基于 [formulahendry/wechat-acp](https://github.com/formulahendry/wechat-acp) 扩展，保留上游 MIT 许可和历史。上游负责微信 iLink 通道、ACP Agent 接入及媒体传输；本项目增加 Codex 会话选择、App Server 生命周期管理、目标会话附件路由，以及 macOS 桌面退出命令。原始使用说明见 [README.upstream.md](README.upstream.md)。
 
-<img src="./resources/screenshot.jpg" alt="wechat-acp screenshot" width="400" />
+## 当前功能价值
 
-## Features
+- **远程关闭 Codex 桌面：**微信发送 `/acp codex quit`，桥接请求桌面正常退出，确认其 App Server 停止后反馈结果。微信桥接独立运行，继续接收消息。
+- **访问最近五十个会话：**`/acp list` 每次显示 10 个，连续使用 `/acp more` 可浏览最近 50 个（有足够会话时）；后端有下一页时还可继续。支持关键词查找、编号选择和完整 ID 定位。
+- **继续原来的工作：**选择后发送文字、图片或文件，任务结果通过微信返回；无需复制对话或为接管另建会话。
+- **随时发起交还：**`/acp release-all` 释放原 ACP 连接及目标路由持有的全部会话。任务、审批、排队消息或附件发送尚未结束时会拒绝释放，完成后再试。
+- **回到 PC 接着做：**收到释放成功回复后，重新打开 Codex 桌面 App，进入原会话继续。当前验证环境为 macOS，远程退出命令尚未实现 Windows 版本。
 
-- WeChat QR login with terminal QR rendering
-- One ACP agent session per WeChat user
-- Built-in ACP agent presets for common CLIs
-- Custom raw agent command support
-- Agent image output delivered as native WeChat image messages
-- Agent audio, embedded resources, and generated files delivered to WeChat
-- Auto-allow permission requests from the agent
-- Direct message only; group chats are ignored
-- Background daemon mode
+这是一套个人在微信与桌面之间轮流接管会话的工具。两端各自运行 App Server，同一会话的写入权需要先释放再接管；尚不支持桌面和微信实时共同控制。
 
-## Requirements
+## 典型使用流程
 
-- Node.js 20+
-- A WeChat environment that can use the iLink bot API
-- An ACP-compatible agent available locally or through `npx`
+| 阶段 | 操作 |
+| --- | --- |
+| 出门后准备微信接管 | `/acp codex quit`，等待桌面及其服务退出的成功回复 |
+| 查找会话 | `/acp list`，必要时 `/acp more` 或 `/acp list 关键词` |
+| 选择目标 | `/acp use 编号` |
+| 查看上下文 | `/acp recent`，显示最近 6 条可见文本消息 |
+| 远程工作 | 直接发送文字、图片或文件；需要交付文件时直接向 Agent 提出 |
+| 回到电脑前 | `/acp release-all`，等待成功回复 |
+| 本地继续 | 打开 Codex 桌面 App，进入原会话 |
 
-## Quick Start
+`/acp codex quit` 会退出整个桌面 App，可能中断桌面正在运行的任务。它采用正常退出，不强制结束；遇到退出确认、残留服务或超时会报告未完成。桥接目前无法可靠读取桌面全部任务的忙碌状态。
 
-Start with a built-in agent preset:
+`/acp off` 只返回原 ACP 聊天，**不会释放会话占用**。
 
-```bash
-npx -y wechat-acp@latest --agent copilot
-```
+## 命令
 
-Or use a raw custom command:
+| 命令 | 用途 |
+| --- | --- |
+| `/acp help` | 查看命令帮助 |
+| `/acp codex quit` | 正常退出 macOS Codex 桌面并检查服务停止 |
+| `/acp list [关键词]` | 列出最近会话，每页 10 个 |
+| `/acp more` | 下一页，编号仅对应最近一次显示的列表 |
+| `/acp use <编号或完整 ID>` | 选择目标；选择本身不会启动任务 |
+| `/acp current` | 查看当前目标 |
+| `/acp recent [编号或完整 ID]` | 最近 6 条用户/助手文本消息 |
+| `/acp reply <内容>` | 向当前目标发送文字 |
+| `/acp send <编号或完整 ID> <内容>` | 向指定目标发送文字 |
+| `/acp result` | 查看最近一次桥接发送的状态或结果 |
+| `/acp new` | 在配置的工作目录创建并选择会话 |
+| `/acp off` | 返回原 ACP 聊天 |
+| `/acp release-all` | 释放桥接持有的全部会话，保留历史 |
 
-```bash
-npx -y wechat-acp@latest --agent "npx my-agent --acp"
-```
+`/acp` 路由及桌面退出命令仅接受微信扫码配对本人。未知命令不会传给模型执行。`/acp-config`、`/acp-cancel` 等上游命令仍针对原 ACP 会话，不会控制选中的 App Server 目标。
 
-On first run, the bridge will:
+## 安装与启动
 
-1. Start WeChat QR login
-2. Render a QR code in the terminal
-3. Save the login token under `~/.wechat-acp`
-4. Begin polling direct messages
+要求 Node.js 20+、可使用 iLink Bot API 的微信账号、已配置认证的本地 Codex。桌面退出功能要求 macOS，且 `codexServer.command` 指向桌面 App 内的 Codex 可执行文件。
 
-## Trying preview builds
-
-Every push to `main` is automatically published to npm under the `next` dist-tag, so you can try unreleased changes without waiting for a tagged release:
-
-```bash
-npx -y wechat-acp@next --agent copilot
-```
-
-These versions are tagged `<base>-next.<UTC-timestamp>.<short-sha>` (e.g. `0.7.1-next.202605311530.abc1234`, where `0.7.1` is the next patch above whatever `@latest` is). They are built from `main` after CI passes, but have not been through a release review — expect rough edges. Stable users should keep using `wechat-acp@latest`.
-
-## Built-in Agent Presets
-
-List the bundled presets:
-
-```bash
-npx wechat-acp agents
-```
-
-Current presets:
-
-- `copilot`
-- `claude`
-- `gemini`
-- `qwen`
-- `codex`
-- `opencode`
-- `openclaw`
-- `kiro`
-- `hermes`
-- `kimi`
-- `pi`
-
-These presets resolve to concrete `command + args` pairs internally, so users do not need to type long `npx ...` commands.
-
-## CLI Usage
-
-```text
-wechat-acp --agent <preset|command> [options]
-wechat-acp agents
-wechat-acp inject --text <text>
-wechat-acp stop
-wechat-acp status
-```
-
-Options:
-
-- `--agent <value>`: built-in preset name or raw agent command
-- `--cwd <dir>`: working directory for the agent process
-- `--login`: force QR re-login and replace the saved token
-- `--daemon`: run in background after startup
-- `--config <file>`: load JSON config file
-- `--instance <name>`: run as a named, isolated instance. See "Running multiple instances" below.
-- `--idle-timeout <minutes>`: session idle timeout, default `1440` (use `0` for unlimited)
-- `--max-sessions <count>`: maximum concurrent user sessions, default `10`
-- `--session-resume <mode>`: persistence policy across bridge restarts: `off` (default), `auto`, or `required`
-- `--turn-end-message <text>`: send a standalone message after each completed agent turn (default: disabled)
-- `--inbox-dir <dir>`: directory where received binary files are saved (default: `<storage.dir>/inbox`). The agent sees the absolute saved path in the prompt and can read the file directly.
-- `--no-inbox`: do not save received files; the agent only sees a size notice.
-- `--hide-thoughts`: do not forward agent thinking to WeChat (default: forwarded)
-- `--show-diffs`: forward ACP file diffs to WeChat (default: hidden)
-- `--hide-images`: suppress inline images from tool calls. Explicit agent message images and attachments are still sent.
-- `--hide-audio`: do not forward agent audio output to WeChat (default: forwarded)
-- `--hide-resources`: do not forward intermediate tool resources to WeChat (default: forwarded). Explicit agent resources and files sent with `attach_file` are still delivered.
-- `--resource-inline-limit <chars>`: render tool text resources up to this length inline and send longer ones as file attachments (default: `1000`; range: `0` to `4000`; use `0` to attach all non-empty tool text resources)
-- `inject --text <text>`: enqueue a local text message for the running daemon
-- `-V, --version`: print version and exit
-- `-h, --help`: show help
-
-Examples:
-
-```bash
-npx -y wechat-acp@latest --agent copilot
-npx -y wechat-acp@latest --agent claude --cwd D:\code\project
-npx -y wechat-acp@latest --agent "npx @github/copilot --acp"
-npx -y wechat-acp@latest --agent gemini --daemon
-```
-
-## Running multiple instances
-
-By default everything (saved login token, daemon pid/log, sync state, telemetry id) lives under `~/.wechat-acp/`, which means a single machine can only host one bridge at a time. Pass `--instance <name>` to namespace all of that under `~/.wechat-acp/instances/<name>/` and run several bridges side by side, each with its own WeChat account and project directory.
-
-Typical setup: WeChat account 1 drives project A, WeChat account 2 drives project B.
-
-```bash
-# Terminal 1: scan with WeChat account 1
-npx -y wechat-acp@latest --instance projA --agent copilot --cwd D:\code\repo-a
-
-# Terminal 2: scan with WeChat account 2
-npx -y wechat-acp@latest --instance projB --agent copilot --cwd D:\code\repo-b
-```
-
-The first run of each instance prints its own QR code. Tokens are saved per instance, so subsequent runs reuse them independently.
-
-The `stop` and `status` subcommands also honor `--instance`:
-
-```bash
-npx -y wechat-acp@latest status --instance projA
-npx -y wechat-acp@latest stop   --instance projB
-```
-
-Without `--instance`, paths fall back to `~/.wechat-acp/` exactly as before, so existing installs are unaffected.
-
-## Configuration File
-
-You can provide a JSON config file with `--config`.
-
-Example:
-
-```json
-{
-  "agent": {
-    "preset": "copilot",
-    "cwd": "D:/code/project",
-    "showDiffs": true,
-    "resourceInlineLimit": 1000
-  },
-  "session": {
-    "idleTimeoutMs": 86400000,
-    "maxConcurrentUsers": 10,
-    "resume": "auto",
-    "turnEndMessage": "✅ Turn complete"
-  }
-}
-```
-
-`session.resume` controls whether each WeChat user's ACP conversation is
-restored after the bridge restarts:
-
-- `off` keeps the existing behavior and always starts a new ACP session.
-- `auto` loads a saved session when the agent advertises the ACP
-  `loadSession` capability. It starts a new session when loading is unsupported
-  or the saved session no longer exists, but surfaces other load failures.
-- `required` requires an existing saved session to load successfully. A user
-  without a saved session can still start their first conversation.
-
-Session IDs are saved only after the first prompt completes. Loading replays
-history at the ACP protocol level, but the bridge suppresses that replay so old
-messages are not sent to WeChat again. Sessions are isolated by agent and
-absolute working directory: built-in presets use their stable preset ID, while
-raw agents use their command and arguments. Environment variables are never
-stored or included in the identity.
-
-`session.turnEndMessage` is optional. When set to a non-empty string, the
-bridge sends it as a standalone WeChat message after the ACP prompt resolves
-and all output from that turn has been delivered. This makes the real turn
-boundary visible even when the agent streamed several earlier messages or was
-silent during a long-running tool call. The bridge generates this signal, so it
-does not depend on the model following a prompt instruction. The
-`--turn-end-message` CLI option overrides the config file value.
-
-You can also override or add agent presets:
-
-```json
-{
-  "agent": {
-    "preset": "my-agent"
-  },
-  "agents": {
-    "my-agent": {
-      "label": "My Agent",
-      "description": "Internal team agent",
-      "command": "npx",
-      "args": ["my-agent-cli", "--acp"]
-    }
-  }
-}
-```
-
-## Customizing bridge command names (aliases)
-
-Bridge slash commands like `/acp-config` and `/acp-cancel` have fixed
-built-in names that may not feel natural to everyone, and can clash with
-slash commands built into the underlying agent. You can map any bridge
-command to one or more custom aliases via the `commandAliases` config map:
-
-```json
-{
-  "commandAliases": {
-    "/acp-cancel": ["/cancel", "/取消", "取消"],
-    "/acp-config": ["/config", "/设置"],
-    "/acp-new": ["/acp-clear", "/new"]
-  }
-}
-```
-
-With this config:
-
-- Sending `/取消` cancels the current turn (same as `/acp-cancel`), and
-  `/取消 all` works like `/acp-cancel all`.
-- Sending `/设置` lists ACP session config (same as `/acp-config`), and
-  `/设置 set <configId> <value>` works like `/acp-config set ...`.
-- The original built-in names always keep working as a fallback.
-
-Two alias styles are supported:
-
-- **Slash aliases** (start with `/`, e.g. `/cancel`) behave like the
-  built-in commands: they match the command token and may be followed by
-  arguments (`/cancel all`). They must not contain whitespace.
-- **Bare-phrase aliases** (no leading `/`, e.g. `取消`) match only when
-  they equal the *entire* message. This is handy for WeChat voice input,
-  where saying `/取消` out loud feels unnatural — a transcribed `取消`
-  triggers the command. Because they require an exact full-message match,
-  they take no arguments.
-
-Notes:
-
-- Keys must be a known bridge command (`/acp-config`, `/acp-cancel`, `/acp-new`, `/acp-more`, `/acp-prompt-start`, or `/acp-prompt-done`).
-- An alias may not collide with a built-in command name or be mapped to
-  more than one command. Invalid configs are rejected at startup.
-
-## Runtime Behavior
-
-- Each WeChat user gets a dedicated ACP session and subprocess.
-- With session resume enabled, persisted sessions can survive subprocess and bridge restarts.
-- Messages are processed serially per user.
-- Replies are formatted for WeChat before sending.
-- Typing indicators are sent when supported by the WeChat API.
-- Sessions are cleaned up after inactivity (set `idleTimeoutMs` to `0` to disable idle cleanup).
-
-## Fetching text that iLink rejected
-
-WeChat iLink limits how many outbound messages can use one inbound context
-token. If a long agent reply reaches that limit and iLink reports send failures,
-the bridge keeps the failed text segments for 10 minutes. Send this command in
-a new WeChat message to deliver them with its fresh context token:
-
-```text
-/acp-more
-```
-
-The command is handled by the bridge and never becomes an ACP prompt. It sends
-pending segments in order and stops at the first segment that still fails after
-retries. That segment and the remaining segments stay pending for the next
-`/acp-more`. A new normal agent prompt clears older pending output. Storage is
-in memory, limited to 50 text segments per active user, and does not include
-images, audio, or files.
-
-Aliases work through `commandAliases`. Bare aliases must match the whole
-message, so they are intercepted before the normal ACP enqueue path.
-
-This mitigation can only retain failures reported by iLink. If iLink returns
-success but silently drops a message, the bridge cannot detect or replay it.
-
-## Starting a fresh ACP session
-
-Interactive agent commands such as Copilot CLI's `/clear` cannot clear context
-when they are forwarded as normal ACP prompt text. Use the bridge command
-instead:
-
-```text
-/acp-new
-```
-
-The command stops the current user's active turn and agent subprocess, drops
-messages queued behind that turn, clears any multi-part prompt buffer, and
-removes the saved ACP session ID. The user's next normal message starts a new
-agent subprocess and `session/new` conversation with the same agent, working
-directory, environment, and bridge configuration.
-
-Reset is isolated to the requesting WeChat user. Other users and the bridge
-process keep running. It works with `session.resume` set to `off`, `auto`, or
-`required`, and it is handled by `wechat-acp` rather than forwarded to the
-underlying agent.
-
-Use `commandAliases` to add names such as `/acp-clear` or `/new`.
-
-## WeChat ACP config command
-
-`wechat-acp` reserves a bridge-level chat command for inspecting and changing ACP session configuration without exposing a UI picker in WeChat:
-
-```text
-/acp-config
-/acp-config set <configId> <value>
-```
-
-Examples:
-
-```text
-/acp-config
-/acp-config set model gpt-5-mini
-/acp-config set mode plan
-/acp-config set reasoning_effort low
-/acp-config set bridge.thoughts off
-/acp-config set bridge.diffs on
-/acp-config set bridge.images off
-/acp-config set bridge.audio off
-/acp-config set bridge.resources off
-```
-
-Notes:
-
-- The command only works after the WeChat user already has an active ACP session. If not, send a normal message first so the session is created.
-- Agent-specific `configId` values come from the ACP agent's `configOptions`, so that part of the list depends on the configured agent.
-- The built-in `bridge.thoughts`, `bridge.diffs`, `bridge.audio`, and `bridge.resources` options control intermediate output forwarding for the current WeChat user's session. `bridge.resources off` hides tool resources, including entries from `tool_call_update.rawOutput.contents[]`. When tool resources are on, `agent.resourceInlineLimit` controls whether tool text resources are rendered inline or sent as attachments. `bridge.images` controls only inline tool images. Explicit agent resources, explicit response images, and files sent with `attach_file` are always delivered. These options use the startup config as defaults, accept `on` or `off`, and are not persisted across session resets or bridge restarts.
-- Runtime bridge changes take effect on the next agent turn. They do not change a turn that is already running.
-- This command is handled by `wechat-acp` itself and is **not** forwarded to the underlying agent.
-- You can give this command your own aliases via `commandAliases` (see [Customizing bridge command names](#customizing-bridge-command-names-aliases)).
-
-## WeChat ACP cancel command
-
-WeChat does not offer a stop button for an in-flight agent turn, so the bridge exposes a chat command instead:
-
-```text
-/acp-cancel
-/acp-cancel all
-```
-
-Behavior:
-
-- `/acp-cancel` sends `session/cancel` to the agent for the current turn. The in-flight `prompt()` resolves with `stopReason: "cancelled"`, any partial output already streamed is delivered to WeChat with a `[cancelled]` suffix, and the next queued message (if any) is processed as usual.
-- `/acp-cancel all` does the same and also drops every message that was queued behind the current turn. Local injections (`wechat-acp inject`) waiting on those queued messages are rejected.
-- If no turn is in flight, the command replies with a notice and is a no-op.
-- This command is handled by `wechat-acp` itself and is **not** forwarded to the underlying agent.
-- You can give this command your own aliases via `commandAliases` (see [Customizing bridge command names](#customizing-bridge-command-names-aliases)).
-
-## Multi-part message buffering
-
-WeChat does not allow sending images, files, and text in a single message. To work around this, the bridge provides a buffering mode that collects multiple messages and sends them to the agent as one combined request:
-
-```text
-/acp-prompt-start
-/acp-prompt-done
-```
-
-Usage:
-
-1. Send `/acp-prompt-start` to enter buffering mode. The bridge replies with a confirmation.
-2. Send any number of messages (text, images, files) in any order. These are collected locally and **not** forwarded to the agent.
-3. Send `/acp-prompt-done` to flush the buffer. All collected content is combined into a single agent request.
-
-This avoids triggering multiple agent turns (and multiple replies) when a user needs to send mixed content.
-
-- If `/acp-prompt-done` is sent with nothing buffered, the bridge replies with a warning and no agent request is made.
-- If `/acp-prompt-start` is sent while already buffering, the bridge reminds the user and keeps the existing buffer.
-- Buffering is per-user and held in memory. It does not persist across bridge restarts.
-- Buffers expire after 10 minutes of inactivity. A maximum of 50 content blocks can be collected per buffer.
-- This command is handled by `wechat-acp` itself and is **not** forwarded to the underlying agent.
-
-## Injecting messages locally
-
-`wechat-acp inject` lets local automation enqueue a text message for the running daemon. The daemon treats it like an incoming direct message from the target user, sends it to the configured ACP agent, and replies through WeChat.
-
-This is useful for cron or launchd jobs, for example a daily AI news prompt:
-
-```bash
-npx wechat-acp inject --instance main --text "今日 AI 资讯"
-```
-
-Targets:
-
-- Default target: `last-active-user`
-- Custom target: `--to <wechat-user-id>`
-
-The daemon learns `last-active-user` from real incoming WeChat messages and stores the latest `userId + contextToken` under the instance storage directory. If no user has messaged the bot yet, ask the target user to send any message once, then retry the injection.
-
-Injected messages are stored as JSON files under:
-
-```text
-~/.wechat-acp/inject/
-~/.wechat-acp/instances/<name>/inject/
-```
-
-The queue is file-based:
-
-```text
-inject/
-├── pending/
-├── processing/
-├── done/
-└── failed/
-```
-
-`inject` only writes to `pending/`; the daemon moves files through the other directories as it processes them. If the daemon is not running, the message remains queued and will be processed after the daemon starts.
-
-For longer prompts, use a file:
-
-```bash
-npx wechat-acp inject --instance main --file ./prompt.txt
-```
-
-Example Linux cron entry:
-
-```cron
-0 7 * * * /usr/local/bin/wechat-acp inject --instance main --text "今日 AI 资讯"
-```
-
-## Receiving files
-
-When a WeChat user sends a binary file (PDF, image, audio recording exported as a file, ZIP, etc.), `wechat-acp` downloads and decrypts it from the WeChat CDN, then **saves it to disk** so the ACP agent can read it by absolute path. The agent receives a text block like:
-
-```
-[Received file: 报告.pdf (484067 bytes) — saved to: /Users/me/.wechat-acp/inbox/2026-05-21T09-29-12-492Z-报告.pdf]
-```
-
-Any ACP agent that can read local files (Copilot CLI, Claude Code, Codex, …) can then open the saved path with its normal file tools.
-
-Defaults:
-
-- Save location: `<storage.dir>/inbox`, i.e. `~/.wechat-acp/inbox` by default, or `~/.wechat-acp/instances/<name>/inbox` when `--instance` is used.
-- Filename: `<ISO-timestamp>-<original-name>`, with filesystem-unsafe characters in the original name replaced by `_`. Unicode (including Chinese) filenames are preserved.
-- No automatic cleanup. Files live until you delete them; agents may reference them long after the WeChat message arrives. Periodically run e.g. `find ~/.wechat-acp/inbox -mtime +30 -delete` if you want to prune.
-
-Overrides:
-
-- `--inbox-dir /some/path` — write files somewhere else (handy if you want them under iCloud Drive, a project folder, etc.)
-- `--no-inbox` — keep the pre-0.3 behavior where the file buffer is dropped after download and the agent only sees `[Received file: name, N bytes]`.
-
-Text-typed files (`.md`, `.json`, source code, …) and images keep their previous behavior: their content is embedded inline in the prompt as a `resource` / `image` block, no disk write needed.
-
-## Receiving agent-generated files
-
-When the ACP agent advertises HTTP MCP support, `wechat-acp` injects a local
-`attach_file` tool into the session. The agent can call it with a file it
-created under the configured working directory, and the bridge sends that
-snapshot back as a WeChat file message. Files whose type is a supported image
-are delivered as native WeChat images instead of file cards.
-
-Tool calls may also expose intermediate screenshots or video frames as inline
-images. Use `--hide-images` or `agent.showImages: false` to suppress them.
-Images that the agent explicitly emits in its response are always sent.
-Images sent through `attach_file` are always sent.
-
-Tool text resources up to `agent.resourceInlineLimit` characters are shown
-inline. Longer tool text resources are sent as file attachments. The default is
-`1000`; set `--resource-inline-limit 0` to attach every non-empty tool text
-resource. Use `--hide-resources` or `/acp-config set bridge.resources off` to
-hide intermediate tool resources. Explicit agent resources and `attach_file`
-results are still delivered.
-
-The MCP server listens only on a random `127.0.0.1` port, requires a
-process-local bearer token, rejects browser-origin requests, and only reads
-regular files whose resolved path stays inside the agent working directory.
-Files are limited to 25 MiB, kept briefly in memory, and consumed once.
-
-This also handles standard ACP `resource_link` output and Copilot CLI's
-`rawOutput.contents[type=resource_link]` compatibility shape. Agents that do
-not support HTTP MCP injection or do not forward resource links cannot use the
-active `attach_file` flow. Resource visibility settings do not disable the tool
-or its outbound file delivery.
-
-## Storage
-
-By default, runtime files are stored under:
-
-```text
-~/.wechat-acp
-```
-
-This directory is used for:
-
-- saved login token
-- daemon pid file
-- daemon log file
-- sync state
-- anonymous telemetry install id (`telemetry-id`, see Telemetry section)
-- `inbox/` — binary files received from WeChat (see "Receiving files"); disable with `--no-inbox` or relocate with `--inbox-dir`
-- `state.json` — last active user and context token for local injection
-- `inject/` — local injected message queue
-
-When `--instance <name>` is used, the same files live under `~/.wechat-acp/instances/<name>/` instead, fully isolated from other instances.
-
-## Current Limitations
-
-- Direct messages only; group chats are ignored
-- Agent-generated file delivery depends on the agent's HTTP MCP and resource-link support
-- Permission requests are auto-approved
-- Agent communication is subprocess-only over stdio
-- Some preset agents may require separate authentication before they can respond successfully
-
-## Development
-
-For local development:
-
-```bash
-npm install
+```sh
+git clone https://github.com/seanzhang9999/acp-wechat-connector.git
+cd acp-wechat-connector
+npm ci
 npm run build
+cp config.example.json config.local.json
 ```
 
-Run the built CLI locally:
+编辑 `config.local.json` 的工作目录和 Codex 路径。示例保留两条连接：原 ACP Agent 和直接操作 Codex 会话的 App Server。ACP 适配器首次运行可能由 npx 下载；已有固定安装时可改为对应的绝对路径。
 
-```bash
-node dist/bin/wechat-acp.js --help
+从独立终端启动桥接，使其不依赖 Codex 桌面窗口：
+
+```sh
+node dist/bin/wechat-acp.js --config config.local.json --instance personal-codex --daemon
 ```
 
-Watch mode:
+首次配对时可在独立终端以前台方式运行同一命令（去掉 `--daemon`），完成二维码登录后正常停止，再以后台方式启动。避免两个进程同时轮询同一个微信账号。请保留首次登录时使用的 instance 名称。
 
-```bash
-npm run dev
+这里的命令仍叫 `wechat-acp` 以兼容上游入口。**`npx wechat-acp@latest` 安装的是上游版本，不包含本仓库扩展。** 本仓库不自动发布 npm 包。
+
+## 附件
+
+微信入站支持多段文字及多个附件，按消息顺序转发。图片以本地图片输入交给 Codex；文件保留原始字节，保存到私有 inbox 后把路径交给目标会话。路径可见不代表 Agent 的沙盒一定有读取权限。
+
+出站使用最终回答中的 `[文件名](<绝对路径>)` 或 `![图片](<绝对路径>)` 链接交付。桥接会提示 Agent 把产物保存在目标工作目录内，再通过微信上传发送。单文件最多 25 MiB，每轮最多 10 个出站附件。下载失败会阻止整条入站请求；出站文件读取或发送失败会提示原因。其他桌面任务的独立回复不会自动镜像到微信。
+
+## 待改进：用自然语言管理会话的小 Agent
+
+计划在桥接控制层增加一个轻量 Agent，使用户可以直接说：
+
+- “切到昨天讨论埃及行程的那个会话。”
+- “把这个会话前面十轮再给我看看。”
+- “找一下最近讨论 ACP 的会话，先告诉我有哪些。”
+
+该 Agent 应先检索会话元数据和必要的上下文，将自然语言转换为确定的查找、读取、选择操作。存在多个相似会话时返回文字候选项让用户选择；选中后的业务请求仍交给原目标会话，不自动新建替代会话，也不自动批准工具操作。
+
+**目前尚未实现。** 当前只有关键词、编号/ID 和最近 6 条文本读取，没有历史对话翻页。后续需要补充按需读取更多历史、分页、上下文预算和选择歧义处理。
+
+### 为什么优先自然语言，而不是 HTML 点击切换
+
+当前接入的是微信 iLink Bot 专用消息通道，也是 OpenClaw 微信适配器所使用的通道类型；本项目不需要运行完整 OpenClaw。当前实现只使用消息和媒体收发，尚未发现或验证可以在这条聊天通道内嵌入任意 HTML 并接收点击回调的能力。
+
+因此暂不把 HTML 会话选择器作为方案，优先采用自然语言和文字候选列表。外部网页链接与聊天内交互不是同一种能力；这里不宣称微信所有场景都不支持 HTML。
+
+## 验证与边界
+
+- 当前 macOS 构建与测试：244 项通过，1 项 Windows 专用测试跳过。
+- 隔离的真实 App Server 测试验证：第二服务先因写入锁无法接管，释放后可恢复同一个测试会话；无需调用模型。
+- 个人使用中已反馈桌面退出后微信消息进入原会话；这不等于所有双向附件和回到桌面的场景均已验收。
+- 桌面退出的自动化测试使用模拟进程，不会在测试中真的退出用户桌面。
+- 目标 App Server 的审批/动态工具请求不会被自动批准；独立服务可能因没有审批界面而等待。上游 ACP 权限处理是另一条路径，见上游说明。
+- 历史可读不代表写入权已释放。释放失败、超时或传输状态不确定时不会自动复制会话或重发任务。
+
+```sh
+npm run build
+npm test
+CODEX_PATH=/absolute/path/to/codex node scripts/codex-release-smoke.mjs
 ```
 
-## Telemetry
+详见 [实现、配置与交接研究](docs-codex-routing.md)。生产登录状态、token、会话历史、附件、二维码、日志与本机启动脚本均不属于公开源码。
 
-`wechat-acp` collects anonymous usage telemetry via Azure Application Insights to help understand which agent presets are used and to detect crashes.
+## 来源与许可
 
-**To disable telemetry**, set the `WECHAT_ACP_TELEMETRY` environment variable to `0`, `false`, or `off` before running:
-
-```bash
-WECHAT_ACP_TELEMETRY=0 npx wechat-acp --agent copilot
-```
-
-**What is collected** (18 event types only):
-
-- `app.start` / `app.stop` — process lifecycle, agent preset name, daemon flag, uptime
-- `login.success` / `login.failure` / `token.reused` — WeChat login outcomes (no token, no QR URL)
-- `message.received` — message arrived; only the categorical kind (`text` / `image` / `voice` / `file` / `video` / `empty`) and a hashed user id
-- `message.injected` — local injection queued for processing; only target kind (`last-active-user` / `explicit`) and a hashed user id
-- `command.acp_config.view` — `/acp-config` invoked to list options; whether a session exists and the option count
-- `command.acp_config.set`: `/acp-config set` succeeded; `configId`, option type (`select` / `boolean`), and the resolved option value (from either a built-in bridge option or the agent's declared `configOptions`, never the user's raw input)
-- `command.acp_cancel` — `/acp-cancel` invoked; whether the queue was drained, whether an in-flight turn was actually cancelled, and how many queued messages were dropped
-- `command.buffer_start` — `/acp-prompt-start` invoked to enter buffering mode
-- `command.buffer_done` — `/acp-prompt-done` invoked to flush buffer; number of content blocks collected
-- `session.created` — new ACP session opened
-- `prompt.completed` — ACP turn finished; agent preset, stop reason, duration, reply length
-- `reply.sent` — reply pushed back to WeChat; segment count, total length
-- `reply.image.sent`: image reply pushed back to WeChat; byte size, MIME type, duration
-- `reply.audio.sent`: audio reply pushed back to WeChat as a file message; byte size, MIME type, duration
-- `reply.file.sent`: agent-generated file pushed back to WeChat; byte size, MIME type, duration
-
-Plus exception reports for `monitor`, `prompt`, `reply`, `reply.image`, `reply.audio`, `reply.file`, `artifact_mcp`, `auth`, `agent_spawn`, `enqueue`, `buffer`, `command`, and `state` failures.
-
-**What is never collected**: message bodies, filenames, voice transcripts, image URLs, login tokens, QR codes, raw agent command strings, environment variables, working directory paths, raw WeChat user IDs.
-
-User IDs are sha256-hashed with a per-install salt stored in `~/.wechat-acp/telemetry-id`. The salt is generated on first run and never leaves your machine. Delete the file to rotate it.
-
-## License
-
-MIT
+基于 [WeChat ACP](https://github.com/formulahendry/wechat-acp)，上游基线提交 `4b787a5`。保留 [MIT LICENSE](LICENSE) 及上游贡献历史。WeChat、Codex、ACP、OpenClaw 等名称归各自项目或权利人；本项目是个人扩展，非官方产品。

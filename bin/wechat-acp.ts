@@ -393,6 +393,7 @@ async function main(): Promise<void> {
   let configFileSetInjectDir = false;
   if (args.configFile) {
     const fileConfig = loadConfigFile(args.configFile);
+    if (fileConfig.codexServer) config.codexServer = fileConfig.codexServer;
     Object.assign(config.wechat, fileConfig.wechat ?? {});
     Object.assign(config.agent, fileConfig.agent ?? {});
     Object.assign(config.agents, fileConfig.agents ?? {});

@@ -1,7 +1,7 @@
 {
-  "name": "wechat-acp",
+  "name": "acp-wechat-connector",
   "version": "0.10.0",
-  "description": "Bridge WeChat to any ACP-compatible AI agent",
+  "description": "Personal WeChat remote handoff for Codex desktop sessions",
   "type": "module",
   "files": [
     "dist/",
@@ -44,11 +44,11 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/formulahendry/wechat-acp.git"
+    "url": "git+https://github.com/seanzhang9999/acp-wechat-connector.git"
   },
-  "homepage": "https://github.com/formulahendry/wechat-acp#readme",
+  "homepage": "https://github.com/seanzhang9999/acp-wechat-connector#readme",
   "bugs": {
-    "url": "https://github.com/formulahendry/wechat-acp/issues"
+    "url": "https://github.com/seanzhang9999/acp-wechat-connector/issues"
   },
   "license": "MIT",
   "keywords": [
@@ -57,5 +57,6 @@
     "agent-client-protocol",
     "ai-agent",
     "bridge"
-  ]
+  ],
+  "private": true
 }

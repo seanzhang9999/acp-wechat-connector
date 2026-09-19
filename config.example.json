@@ -1,0 +1,25 @@
+{
+  "agent": {
+    "command": "npx",
+    "args": [
+      "-y",
+      "@agentclientprotocol/codex-acp"
+    ],
+    "cwd": "/absolute/path/to/your/project",
+    "env": {
+      "CODEX_PATH": "/Applications/ChatGPT.app/Contents/Resources/codex"
+    },
+    "showThoughts": false,
+    "showResources": false
+  },
+  "codexServer": {
+    "command": "/Applications/ChatGPT.app/Contents/Resources/codex",
+    "args": [
+      "app-server"
+    ]
+  },
+  "session": {
+    "maxConcurrentUsers": 1,
+    "resume": "auto"
+  }
+}

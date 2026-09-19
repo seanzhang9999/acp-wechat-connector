@@ -113,6 +113,8 @@ export const BRIDGE_COMMANDS = {
 } as const;
 
 export interface WeChatAcpConfig {
+  /** Opt-in direct Codex App Server command routing. */
+  codexServer?: import("./codex/client.js").CodexServerConfig;
   /**
    * Optional user-defined aliases for bridge slash commands. Maps a
    * canonical command (e.g. `"/acp-cancel"`) to one or more custom

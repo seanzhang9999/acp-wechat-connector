@@ -27,3 +27,13 @@ Thumbs.db
 *.ntvs*
 *.njsproj
 *.sln
+
+# Private runtime data and local deployment configuration
+state.json
+config.local.json
+.wechat-acp/
+inbox/
+inject/
+backups/
+*.pid
+wechat-login*.png

@@ -5,6 +5,10 @@
  * One bridge = one WeChat bot account → many users → many agent sessions.
  */
 
+import path from "node:path";
+import { messageToCodexInput, deliverAttachments } from "./codex/attachments.js";
+import { quitCodexDesktop } from "./codex/desktop.js";
+import { CodexRouter } from "./codex/router.js";
 import type * as acp from "@agentclientprotocol/sdk";
 import crypto from "node:crypto";
 import { login, loadToken, type TokenData } from "./weixin/auth.js";
@@ -121,8 +125,11 @@ export class WeChatAcpBridge {
   private bufferFlushing = new Map<string, Promise<void>>();
   private log: (msg: string) => void;
 
+  private codexRouter?: CodexRouter;
+
   constructor(config: WeChatAcpConfig, log?: (msg: string) => void) {
     this.config = config;
+    if (config.codexServer) this.codexRouter = CodexRouter.create(config.codexServer, config.agent.cwd);
     this.log = log ?? ((msg: string) => console.log(`[wechat-acp] ${msg}`));
     this.pendingText = new PendingTextRegistry({
       ttlMs: PENDING_TEXT_TTL_MS,
@@ -344,6 +351,7 @@ export class WeChatAcpBridge {
   }
 
   async stop(): Promise<void> {
+    await this.codexRouter?.close();
     this.log("Stopping bridge...");
     this.abortController.abort();
     const cleanupErrors: unknown[] = [];
@@ -385,6 +393,72 @@ export class WeChatAcpBridge {
     const contextToken = msg.context_token;
     if (!userId || !contextToken) return;
 
+    const text = msg.item_list?.length === 1 && msg.item_list[0].type === 1
+      ? msg.item_list[0].text_item?.text : undefined;
+    const command = text !== undefined && /^\/acp(?:\s|$)/.test(text.trim());
+    if (command || (this.codexRouter && !text?.trim().startsWith("/acp-"))) {
+      // Commands and selected-target text never fall through to the ACP agent.
+      // Routing exposes local history: only the QR-confirmed owner may use it.
+      if (!this.tokenData?.userId || userId !== this.tokenData.userId) return;
+      const previous = this.messageHandlingChains.get(userId) ?? Promise.resolve();
+      const current = previous.catch(() => {}).then(async () => {
+        if (command && /^\/acp\s+codex(?:\s|$)/i.test(text!.trim())) {
+          if (!/^\/acp\s+codex\s+quit\s*$/i.test(text!.trim())) {
+            await this.sendReply(userId, contextToken, "用法：/acp codex quit（正常退出桌面 App，可能中断桌面正在执行的任务）。");
+            return;
+          }
+          await this.sendReply(userId, contextToken, "正在请求 Codex 桌面 App 正常退出，并检查其服务是否停止；桌面正在执行的任务可能中断。微信桥接会继续运行。");
+          try {
+            const result = await this.quitDesktop();
+            await this.sendReply(userId, contextToken, result);
+          } catch (e) {
+            await this.sendReply(userId, contextToken, `桌面退出未完成：${e instanceof Error ? e.message : String(e)}`);
+          }
+          return;
+        }
+        if (!this.codexRouter) {
+          await this.sendReply(userId, contextToken, "未配置 codexServer；/acp 命令未发送给模型。");
+          return;
+        }
+        if (!command && !this.codexRouter.selected(userId)) {
+          await this.handleUserMessage(msg, userId, contextToken, this.messageGenerationForUser(userId));
+          return;
+        }
+        const reply = Object.assign(
+          (response: string) => this.sendReply(userId, contextToken, response),
+          { attachments: async (response: string, cwd: string) => {
+            await deliverAttachments(response, cwd, file =>
+              /^(image\/(jpeg|png|gif|webp))$/.test(file.mimeType)
+                ? this.sendImageReply(userId, contextToken, file, this.messageGenerationForUser(userId))
+                : this.sendFileReply(userId, contextToken, file, this.messageGenerationForUser(userId)),
+              notice => this.sendReply(userId, contextToken, notice));
+          } },
+        );
+        if (command && /^\/acp\s+(?:release-all|release\s+all)\s*$/i.test(text!.trim())) {
+          try {
+            if (this.messageBuffers.size || this.bufferFlushing.size)
+              throw new Error("还有尚未发送的缓冲消息，请先发送或处理完再释放。");
+            this.sessionManager?.assertReleasable();
+            await this.codexRouter.assertReleasable();
+            const acpCount = await this.sessionManager?.releaseAll() ?? 0;
+            const routedCount = await this.codexRouter.releaseAll();
+            await reply(`已释放桥接持有的全部会话：ACP ${acpCount} 个，目标路由 ${routedCount} 个。历史记录已保留。桌面端现在可重新打开；下次微信消息会重新建立连接。`);
+          } catch (e) { await reply(`释放未完成：${e instanceof Error ? e.message : String(e)}`); }
+          return;
+        }
+        if (text !== undefined) {
+          await this.codexRouter.handle(userId, text, reply);
+        } else {
+          try {
+            const input = await messageToCodexInput(msg, this.config.wechat.cdnBaseUrl,
+              this.config.storage.inboxDir || path.join(this.config.storage.dir, "inbox"));
+            await this.codexRouter.handleInput(userId, input, reply);
+          } catch (e) { await reply(`附件消息未发送：${e instanceof Error ? e.message : String(e)}`); }
+        }
+      });
+      return this.trackMessageHandling(userId, current);
+    }
+
     const acpNewCommand = this.extractAcpNewCommand(msg);
     if (acpNewCommand === ACP_NEW_COMMAND) {
       const generation = ++this.resetEpoch;
@@ -404,6 +478,10 @@ export class WeChatAcpBridge {
         return this.handleUserMessage(msg, userId, contextToken, generation);
       });
     return this.trackMessageHandling(userId, current);
+  }
+
+  protected async quitDesktop(): Promise<string> {
+    return quitCodexDesktop(this.config.codexServer?.command ?? "");
   }
 
   private async trackMessageHandling(

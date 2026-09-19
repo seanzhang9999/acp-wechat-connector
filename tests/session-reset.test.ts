@@ -1362,3 +1362,33 @@ test("an old turn cannot reply or remove the replacement session after reset", a
   assert.deepEqual(completions, ["rejected"]);
   assert.equal(manager.getSession("target"), replacement);
 });
+
+test("releaseAll preserves persisted ACP session while closing only idle processes", async () => {
+  const removed: string[] = [], kills: string[] = [];
+  const manager = makeManager({ removePersistedSessionId: async id => { removed.push(id); } });
+  const session = makeSession("owner", { process: makeProcess(kills) });
+  (manager as any).sessions.set("owner", session);
+  assert.equal(await manager.releaseAll(), 1);
+  assert.deepEqual(kills, ["SIGTERM"]);
+  assert.deepEqual(removed, []);
+  assert.equal(manager.getSession("owner"), undefined);
+  assert.equal(await manager.releaseAll(), 0);
+  await manager.stop();
+});
+
+test("releaseAll refuses processing, queued or pending ACP work", async () => {
+  const kills: string[] = [];
+  const manager = makeManager();
+  const session = makeSession("owner", { process: makeProcess(kills), processing: true });
+  (manager as any).sessions.set("owner", session);
+  await assert.rejects(manager.releaseAll(), /执行中/);
+  session.processing = false;
+  session.queue.push({ prompt: [], contextToken: "ctx" });
+  await assert.rejects(manager.releaseAll(), /排队/);
+  session.queue.length = 0;
+  (manager as any).pendingSessions.set("new", {});
+  await assert.rejects(manager.releaseAll(), /建立/);
+  (manager as any).pendingSessions.clear();
+  assert.deepEqual(kills, []);
+  await manager.stop();
+});
