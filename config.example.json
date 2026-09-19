@@ -21,5 +21,8 @@
   "session": {
     "maxConcurrentUsers": 1,
     "resume": "auto"
+  },
+  "awei": {
+    "enabled": true
   }
 }

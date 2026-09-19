@@ -13,6 +13,8 @@ export interface ThreadSummary {
   name?: string | null;
   preview?: string;
   cwd?: string;
+  createdAt?: number;
+  updatedAt?: number;
   status?: { type: string };
 }
 export interface ThreadItem {

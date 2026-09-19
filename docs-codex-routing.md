@@ -1,3 +1,5 @@
+> v0.11.0 adds 阿维: say `阿维，找一下旅行会话`. See [Awei v1](docs/wechat-assistant-design.md) for natural-language control, paginated history and transcribed-voice routing. Exact commands below retain their behavior. With Awei enabled, voice without transcription is explicitly held back; its routing rules take precedence over the older attachment description below.
+
 # Codex task routing from WeChat
 
 This opt-in extension intercepts `/acp` commands before the ACP agent. It uses one persistent Codex App Server connection for listing, reading and continuing tasks. It does not copy conversations, fork on errors, scrape the desktop UI, or modify the Codex database.

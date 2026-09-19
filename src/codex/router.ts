@@ -11,7 +11,7 @@ import {
 
 export type Reply = ((text: string) => Promise<void>) & { attachments?: (text: string, cwd: string) => Promise<void> };
 const help = [
-  "Codex 会话命令（由桥接器执行，不进入模型）",
+  "阿维 · WorkHub 助手：说“阿维，帮我找会话”，或使用以下精确命令。",
   "/acp list [关键词] — 查找最近会话",
   "/acp more — 下一页",
   "/acp use <编号或完整ID> — 选择会话",
@@ -32,6 +32,8 @@ interface UserState {
   cursor?: string | null;
   query?: string;
   result?: string;
+  listAt?: number;
+  history?: { threadId: string; cursor?: string | null; text: string };
 }
 interface Flight {
   threadId: string;
@@ -45,6 +47,8 @@ interface Flight {
   cwd: string;
 }
 export class CodexRouter {
+  private assistantSessionIds = new Set<string>();
+  hideAssistantSession(id: string): void { this.assistantSessionIds.add(id); }
   private users = new Map<string, UserState>();
   private fresh = new Set<string>();
   private attached = new Set<string>();
@@ -91,7 +95,7 @@ export class CodexRouter {
       this.attached.clear();
       this.fresh.clear();
       this.approvals.clear();
-      for (const user of this.users.values()) user.selected = undefined;
+      for (const user of this.users.values()) { user.selected = undefined; user.history = undefined; }
       return count;
     } finally { this.releasing = false; }
   }
@@ -100,6 +104,73 @@ export class CodexRouter {
       const s = this.state(userId);
       await this.send(s, await this.target(s), input, reply);
     } catch (e) { await reply(`发送失败：${e instanceof Error ? e.message : String(e)}`); }
+  }
+  assistantContext(userId: string) {
+    const s = this.state(userId);
+    const valid = !!s.listAt && Date.now() - s.listAt < 10 * 60_000;
+    return {
+      now: new Date().toISOString(), timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+      current: s.selected ? { id: s.selected.id, name: title(s.selected) } : null,
+      candidates: valid ? s.list.map((t, i) => ({ number: i + 1, id: t.id, name: title(t), createdAt: t.createdAt, updatedAt: t.updatedAt })) : [],
+      candidatesExpired: !!s.list.length && !valid,
+      hasMore: valid && !!s.cursor,
+      history: s.history?.text,
+    };
+  }
+  async assistantSearch(userId: string, query = "", more = false): Promise<string> {
+    const s = this.state(userId);
+    if (more && (!s.cursor || !s.listAt || Date.now() - s.listAt >= 10 * 60_000))
+      throw new Error("候选列表没有下一页或已过期，请重新查找。");
+    const term = more ? s.query : query;
+    const page = await this.rpc.request<{ data: ThreadSummary[]; nextCursor?: string | null }>("thread/list", {
+      limit: 50, sourceKinds: [], ...(term ? { searchTerm: term } : {}), ...(more ? { cursor: s.cursor } : {}),
+    });
+    s.list = page.data.filter(t => !this.assistantSessionIds.has(t.id));
+    s.listAt = Date.now(); s.cursor = page.nextCursor; s.query = term;
+    return this.assistantCandidates(userId);
+  }
+  assistantCandidates(userId: string): string {
+    const c = this.assistantContext(userId);
+    return c.candidates.length ? c.candidates.map(t => `${t.number}. ${t.name}`).join("\n") +
+      "\n说“阿维，切到第几个”即可选择。" + (c.hasMore ? " 还可以说“阿维，下一页会话”。" : "") : "没有找到匹配会话。";
+  }
+  assistantSelect(userId: string, ref: string): string {
+    const s = this.state(userId);
+    const c = this.assistantContext(userId);
+    const found = c.candidates.find(t => t.id === ref || String(t.number) === ref);
+    if (!found) throw new Error("目标不在当前有效候选列表中，请让阿维重新查找。");
+    s.selected = s.list.find(t => t.id === found.id)!;
+    s.history = undefined;
+    return `已切换到「${found.name}」。下一条普通消息会发给这个会话。`;
+  }
+  async assistantHistory(userId: string, ref: string | undefined, count: number, earlier: boolean): Promise<string> {
+    const s = this.state(userId);
+    let t = s.selected;
+    if (ref) {
+      const match = this.assistantContext(userId).candidates.find(x => x.id === ref || String(x.number) === ref);
+      if (!match) throw new Error("目标不在有效候选列表中。");
+      t = s.list.find(x => x.id === match.id);
+    }
+    if (!t) throw new Error("还没选择会话，请先让阿维找会话。");
+    if (earlier && (s.history?.threadId !== t.id || !s.history.cursor))
+      throw new Error("没有可继续向前读取的页面，请先查看最近对话。");
+    const page = await this.rpc.request<{ data: Turn[]; nextCursor?: string | null }>("thread/turns/list", {
+      threadId: t.id, limit: Math.min(20, Math.max(1, count)), sortDirection: "desc", itemsView: "full",
+      ...(earlier ? { cursor: s.history!.cursor } : {}),
+    });
+    const chunks: string[] = [];
+    for (const turn of [...page.data].reverse()) for (const item of turn.items ?? []) {
+      if (item.type === "userMessage") {
+        const text = item.content?.filter(c => c.type === "text").map(c => c.text ?? "").join("\n");
+        if (text) chunks.push(`用户：${text}`);
+      } else if (item.type === "agentMessage" && item.phase !== "commentary" && item.text) chunks.push(`助手：${item.text}`);
+    }
+    const raw = chunks.join("\n\n") || "本页没有可见文本（附件、工具及思考过程未展示）。";
+    const text = `「${title(t)}」${earlier ? "更早" : "最近"} ${page.data.length} 轮对话\n${raw.slice(0, 16000)}` +
+      (raw.length > 16000 ? "\n[本页文本过长已截断；可重新请求更少轮次]" : "") +
+      (page.nextCursor ? "\n可说“阿维，再往前看”。" : "\n已到可读取历史的起点。");
+    s.history = { threadId: t.id, cursor: page.nextCursor, text };
+    return text;
   }
   selected(userId: string): boolean {
     return !!this.users.get(userId)?.selected;
@@ -165,7 +236,8 @@ export class CodexRouter {
                 ? { searchTerm: args }
                 : {}),
           });
-          s.list = r.data;
+          s.list = r.data.filter(t => !this.assistantSessionIds.has(t.id));
+          s.listAt = Date.now();
           s.cursor = r.nextCursor;
           if (cmd === "list") s.query = args;
           await reply(
@@ -183,6 +255,7 @@ export class CodexRouter {
           if (!args) throw new Error("用法：/acp use 编号或ID");
           const t = await this.target(s, args);
           s.selected = t;
+          s.history = undefined;
           await reply(`已选择：${title(t)}\n${t.id}\n选择不会恢复或启动任务。`);
           break;
         }
@@ -217,6 +290,7 @@ export class CodexRouter {
           break;
         case "off":
           s.selected = undefined;
+          s.history = undefined;
           await reply(
             "已返回原 ACP 聊天；已发送任务继续执行，回复仍标注原目标。",
           );
@@ -230,6 +304,7 @@ export class CodexRouter {
           this.attached.add(r.thread.id);
           this.fresh.add(r.thread.id);
           s.selected = r.thread;
+          s.history = undefined;
           await reply(`已新建并选择：${r.thread.id}`);
           break;
         }

@@ -6,6 +6,9 @@
  */
 
 import path from "node:path";
+import { aweiIngress } from "./awei/ingress.js";
+import { AweiController } from "./awei/controller.js";
+import { AcpLanguageService } from "./awei/model.js";
 import { messageToCodexInput, deliverAttachments } from "./codex/attachments.js";
 import { quitCodexDesktop } from "./codex/desktop.js";
 import { CodexRouter } from "./codex/router.js";
@@ -126,6 +129,7 @@ export class WeChatAcpBridge {
   private log: (msg: string) => void;
 
   private codexRouter?: CodexRouter;
+  private awei?: AweiController;
 
   constructor(config: WeChatAcpConfig, log?: (msg: string) => void) {
     this.config = config;
@@ -351,6 +355,7 @@ export class WeChatAcpBridge {
   }
 
   async stop(): Promise<void> {
+    await this.awei?.close();
     await this.codexRouter?.close();
     this.log("Stopping bridge...");
     this.abortController.abort();
@@ -402,6 +407,28 @@ export class WeChatAcpBridge {
       if (!this.tokenData?.userId || userId !== this.tokenData.userId) return;
       const previous = this.messageHandlingChains.get(userId) ?? Promise.resolve();
       const current = previous.catch(() => {}).then(async () => {
+        const ingress = this.codexRouter && this.config.awei?.enabled !== false ? aweiIngress(msg) : { kind: "unchanged" as const };
+        if (ingress.kind === "assistant") {
+          await this.handleAwei(userId, ingress.text, response => this.sendReply(userId, contextToken, response));
+          return;
+        }
+        if (ingress.kind === "untranscribed") {
+          await this.sendReply(userId, contextToken, "这条语音没有附带转写，我还无法判断发给阿维还是当前会话。请使用微信转文字后发送；这条语音未转发。");
+          return;
+        }
+        if (ingress.kind === "business") {
+          if (!ingress.text.trim()) {
+            await this.sendReply(userId, contextToken, "请在“转给当前会话：”后面填写消息。");
+          } else if (this.codexRouter?.selected(userId)) {
+            await this.codexRouter.handleInput(userId, [{ type: "text", text: ingress.text }],
+              this.routedReply(userId, contextToken));
+          } else {
+            this.beginAgentPrompt(userId, contextToken);
+            await this.enqueueMessage({ ...msg, item_list: [{ type: 1, text_item: { text: ingress.text } }] },
+              userId, contextToken, () => true, this.messageGenerationForUser(userId));
+          }
+          return;
+        }
         if (command && /^\/acp\s+codex(?:\s|$)/i.test(text!.trim())) {
           if (!/^\/acp\s+codex\s+quit\s*$/i.test(text!.trim())) {
             await this.sendReply(userId, contextToken, "用法：/acp codex quit（正常退出桌面 App，可能中断桌面正在执行的任务）。");
@@ -424,25 +451,10 @@ export class WeChatAcpBridge {
           await this.handleUserMessage(msg, userId, contextToken, this.messageGenerationForUser(userId));
           return;
         }
-        const reply = Object.assign(
-          (response: string) => this.sendReply(userId, contextToken, response),
-          { attachments: async (response: string, cwd: string) => {
-            await deliverAttachments(response, cwd, file =>
-              /^(image\/(jpeg|png|gif|webp))$/.test(file.mimeType)
-                ? this.sendImageReply(userId, contextToken, file, this.messageGenerationForUser(userId))
-                : this.sendFileReply(userId, contextToken, file, this.messageGenerationForUser(userId)),
-              notice => this.sendReply(userId, contextToken, notice));
-          } },
-        );
+        const reply = this.routedReply(userId, contextToken);
         if (command && /^\/acp\s+(?:release-all|release\s+all)\s*$/i.test(text!.trim())) {
           try {
-            if (this.messageBuffers.size || this.bufferFlushing.size)
-              throw new Error("还有尚未发送的缓冲消息，请先发送或处理完再释放。");
-            this.sessionManager?.assertReleasable();
-            await this.codexRouter.assertReleasable();
-            const acpCount = await this.sessionManager?.releaseAll() ?? 0;
-            const routedCount = await this.codexRouter.releaseAll();
-            await reply(`已释放桥接持有的全部会话：ACP ${acpCount} 个，目标路由 ${routedCount} 个。历史记录已保留。桌面端现在可重新打开；下次微信消息会重新建立连接。`);
+            await reply(await this.releaseBridgeSessions());
           } catch (e) { await reply(`释放未完成：${e instanceof Error ? e.message : String(e)}`); }
           return;
         }
@@ -478,6 +490,47 @@ export class WeChatAcpBridge {
         return this.handleUserMessage(msg, userId, contextToken, generation);
       });
     return this.trackMessageHandling(userId, current);
+  }
+
+  private routedReply(userId: string, contextToken: string) {
+    return Object.assign((response: string) => this.sendReply(userId, contextToken, response), {
+      attachments: async (response: string, cwd: string) => {
+        await deliverAttachments(response, cwd, file =>
+          /^(image\/(jpeg|png|gif|webp))$/.test(file.mimeType)
+            ? this.sendImageReply(userId, contextToken, file, this.messageGenerationForUser(userId))
+            : this.sendFileReply(userId, contextToken, file, this.messageGenerationForUser(userId)),
+          notice => this.sendReply(userId, contextToken, notice));
+      },
+    });
+  }
+
+  protected async handleAwei(userId: string, text: string, reply: (text: string) => Promise<void>): Promise<void> {
+    if (!this.awei) {
+      const router = this.codexRouter!;
+      const model = new AcpLanguageService({ ...this.config.agent,
+        cwd: path.join(this.config.storage.dir, "awei-workspace") }, id => router.hideAssistantSession(id));
+      this.awei = new AweiController(model, router, {
+        release: () => this.releaseBridgeSessions(),
+        quit: () => this.quitDesktop(),
+        off: async () => {
+          let result = "";
+          await router.handle(userId, "/acp off", async text => { result = text; });
+          return result;
+        },
+      });
+    }
+    await this.awei.handle(userId, text, reply);
+  }
+
+  private async releaseBridgeSessions(): Promise<string> {
+    await this.awei?.close();
+    if (this.messageBuffers.size || this.bufferFlushing.size)
+      throw new Error("还有尚未发送的缓冲消息，请先发送或处理完再释放。");
+    this.sessionManager?.assertReleasable();
+    await this.codexRouter!.assertReleasable();
+    const acpCount = await this.sessionManager?.releaseAll() ?? 0;
+    const routedCount = await this.codexRouter!.releaseAll();
+    return `已释放桥接持有的全部会话：ACP ${acpCount} 个，目标路由 ${routedCount} 个。历史记录已保留。桌面端现在可重新打开；下次微信消息会重新建立连接。`;
   }
 
   protected async quitDesktop(): Promise<string> {

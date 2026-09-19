@@ -1,3 +1,12 @@
+# v0.11.0 — 阿维 · WorkHub 助手
+
+- Reuse the configured ACP provider in a separate management session.
+- Add explicit 阿维 text/voice wake routing and business-message escape.
+- Add structured session search, selection, current target, paginated history and partial summaries.
+- Require matching natural-language confirmation for desktop quit and release, preserving exact commands.
+- Reject untranscribed voice instead of guessing a destination; retain owner-only dispatch.
+- Add protocol/lifecycle tests and an opt-in real ACP model smoke test.
+
 # Changelog
 
 ## Unreleased

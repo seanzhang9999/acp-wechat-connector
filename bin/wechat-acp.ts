@@ -394,6 +394,7 @@ async function main(): Promise<void> {
   if (args.configFile) {
     const fileConfig = loadConfigFile(args.configFile);
     if (fileConfig.codexServer) config.codexServer = fileConfig.codexServer;
+    if (fileConfig.awei) config.awei = fileConfig.awei;
     Object.assign(config.wechat, fileConfig.wechat ?? {});
     Object.assign(config.agent, fileConfig.agent ?? {});
     Object.assign(config.agents, fileConfig.agents ?? {});
