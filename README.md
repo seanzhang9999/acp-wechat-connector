@@ -1,6 +1,6 @@
 # 阿维 · WorkHub 助手
 
-ACP WeChat Connector · v0.14.1
+ACP WeChat Connector · v0.15.0
 
 团队成员从这里开始：[安装、更新与完整体验指南](docs/team-guide.md)。
 
@@ -132,7 +132,7 @@ node dist/bin/wechat-acp.js --config config.local.json --instance personal-codex
 
 ## 验证与边界
 
-- 当前 macOS 构建与测试：281 项通过，1 项 Windows 专用测试跳过。
+- 当前 macOS 构建与测试：301 项通过，1 项 Windows 专用测试跳过。
 - 隔离的真实 App Server 测试验证：第二服务先因写入锁无法接管，释放后可恢复同一个测试会话；无需调用模型。
 - 2026-09-20 用户实机验收：退出桌面后阿维保持正常，重新启动桌面后 Remote 恢复；独立兜底监视器检测到恢复后退出。这不等于所有附件与自动化场景均已验收。
 - 真实 ACP 模型冒烟验证通过：自然语言查找 → 选择第一个 → 读取五轮；业务会话和退出动作使用测试替身，不会操作正式会话。
@@ -169,3 +169,8 @@ node scripts/awei-smoke.mjs config.local.json
 日常可保持桌面运行以使用 Remote 和本地定时任务。需要从微信接管同一会话时明确退出桌面，结束后执行 restore。不会根据沉默时长自动关闭/打开桌面。
 
 启动验证仅确认桌面和其 App Server 进程存在，不代表手机 Remote 已连通或自动化已执行。电脑关机、休眠或桥接离线时，微信无法执行启动命令。定时任务边界见 [助手设计](docs/wechat-assistant-design.md)。
+
+
+### v0.15：WorkBuddy 连接器停止与接管
+
+新增 awei_release 与 --lock-status / --release / --take-over。进程崩溃后的已知死锁自动归档回收；活进程不会被默认终止。主动释放后有 180 秒交接窗口，长任务拒绝释放。显式 --force 仅用于用户要求中断旧进程的场景，不能放进默认配置。参见 [专用会话停止与接管](docs/workbuddy-integration-proposal.md)。

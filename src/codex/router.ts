@@ -107,6 +107,9 @@ export class CodexRouter {
   static create(config: CodexServerConfig, cwd: string): CodexRouter {
     return new CodexRouter(new CodexRpc(config), cwd, config.turnTimeoutMs);
   }
+  async assertIdleForDisconnect(): Promise<void> {
+    if (this.attached.size || this.approvals.size || this.flights.size || this.delivering.size || this.releasing) await this.assertReleasable();
+  }
   hasPendingReply(): boolean { return !!(this.flights.size || this.delivering.size); }
   async assertReleasable(): Promise<number> {
     if (this.releasing || this.flights.size || this.delivering.size || this.approvals.size)

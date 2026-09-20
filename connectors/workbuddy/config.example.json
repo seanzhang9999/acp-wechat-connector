@@ -1,11 +1,24 @@
 {
   "agent": {
     "command": "npx",
-    "args": ["-y", "@agentclientprotocol/codex-acp"],
+    "args": [
+      "-y",
+      "@agentclientprotocol/codex-acp"
+    ],
     "cwd": "/absolute/path/to/project",
-    "env": {"CODEX_PATH": "/Applications/ChatGPT.app/Contents/Resources/codex"}
+    "env": {
+      "CODEX_PATH": "/Applications/ChatGPT.app/Contents/Resources/codex"
+    }
   },
-  "codexServer": {"command": "/Applications/ChatGPT.app/Contents/Resources/codex", "args": ["app-server"]},
+  "codexServer": {
+    "command": "/Applications/ChatGPT.app/Contents/Resources/codex",
+    "args": [
+      "app-server"
+    ]
+  },
   "storageDir": "/absolute/path/to/private/awei-workbuddy",
-  "attachmentRoots": ["/absolute/path/to/workbuddy/received-files"]
+  "attachmentRoots": [
+    "/absolute/path/to/workbuddy/received-files"
+  ],
+  "handoverGraceSeconds": 180
 }

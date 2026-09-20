@@ -44,5 +44,6 @@ export class RelayJobs {
     return { id, state: job.state, cursor: cursor + events.length, hasMore: cursor + events.length < job.events.length, events,
       note: "done 表示本次路由处理结束，不代表操作成功；以事件中的执行结果为准。" };
   }
+  hasRunning(): boolean { return this.active || [...this.jobs.values()].some(job => job.state === "running"); }
   status() { return { active: this.active, receipts: [...this.jobs.values()].slice(-5).map(({ id, state }) => ({ id, state })) }; }
 }

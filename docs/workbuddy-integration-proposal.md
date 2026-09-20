@@ -1,6 +1,6 @@
 # WorkBuddy 专用会话 → 阿维
 
-版本：v0.14.1。此文替代上一版混合分流方案。已实现本地 MCP 接入和自动测试；WorkBuddy 微信侧的实际调用与媒体交付尚需在专用会话验收。
+版本：v0.15.0。此文替代上一版混合分流方案。已实现本地 MCP 接入和自动测试；WorkBuddy 微信侧的实际调用与媒体交付尚需在专用会话验收。
 
 ## 产品边界
 
@@ -21,7 +21,7 @@ flowchart LR
 
 ## 已实现
 
-- `bin/awei-workbuddy.ts`：持久 stdio MCP 连接，三个工具 `awei_message`、`awei_poll`、`awei_status`。
+- `bin/awei-workbuddy.ts`：持久 stdio MCP 连接，四个工具 `awei_message`、`awei_poll`、`awei_status`、`awei_release`。
 - `src/workbuddy/core.ts`：独立阿维实例，复用正文检索、连续阅读、业务路由、受保护的桌面交接、双向附件和形象图。
 - `src/workbuddy/jobs.ts`：原文消息回执、相同编号幂等、执行期间拒绝并行提交、事件游标、磁盘保存和重启后未知状态提示。
 - `connectors/workbuddy/skills/awei-session/SKILL.md`：仅为明确启用的专用会话服务，全量转交，不影响其他会话。
@@ -65,7 +65,7 @@ state=done 表示路由处理结束，操作成功与否以文本事件为准；
 
 当前长任务仍由此 MCP 进程持有连接。WorkBuddy 保持连接时，单次工具调用结束不会退出后台任务；WorkBuddy 关闭或结束 MCP 进程时不能保证任务继续。重启将原 running 回执标为 unknown，不重放；业务目标 ID 跨重启保存，恢复目标选择不自动发送业务消息，待确认操作不跨重启保留。
 
-storageDir 有独占锁避免两个进程争用。异常强制退出可能留下 relay.lock，先核对没有持有该目录的进程，再处理锁；不能自动删锁抢占。当前最多保留 1000 条回执，满后拒绝新提交，需人工归档实例；不自动清理历史或附件。
+storageDir 使用带 PID/启动时间/版本的独占锁。已死 owner 在启动时自动归档回收；活 owner 保持拒绝，正常交接使用 awei_release。旧版空锁或不可核实状态不自动回收。详见下面 v0.15.0 交接流程。当前最多保留 1000 条回执，满后拒绝新提交，需人工归档实例；不自动清理历史或附件。
 
 ## 团队验收顺序
 
@@ -88,3 +88,33 @@ storageDir 有独占锁避免两个进程争用。异常强制退出可能留下
 图片事件除了原有元数据，还提供 MCP image 内容。已检查本机 WorkBuddy 的结果呈现说明：present_files 将图片也作为产物卡片；因此该工具成功不能证明微信原生图片成功。专用 Skill 优先图片回传、明确不支持时的限制，工作图不自动降级成文件刷屏。真实微信图片形态仍需复测；MCP 图片块测试成功不代替手机验收。
 
 回传正文不再要求显示 receiptId 或逐项事件清单。收到 done 且无更多事件后停止查询；旧失败回执不会因升级变成成功，也不会自动重放。
+
+
+## v0.15.0 主动释放与显式接管
+
+普通启动保持配置文件路径不变。以下示意命令中的两个路径需替换为本机实际值：
+
+```sh
+# 只读锁检查，不创建存储目录、不连接模型、不修改回执
+node /path/to/dist/bin/awei-workbuddy.js /path/to/relay-config.json --lock-status
+# 向持锁进程请求正常释放；拒绝忙碌，不创建新的服务
+node /path/to/dist/bin/awei-workbuddy.js /path/to/relay-config.json --release
+# 已释放后新会话立即接管，或一次性迁移旧空锁
+node /path/to/dist/bin/awei-workbuddy.js /path/to/relay-config.json --take-over
+# 仅在用户明确允许中断旧任务后使用，不放进默认配置
+node /path/to/dist/bin/awei-workbuddy.js /path/to/relay-config.json --take-over --force
+```
+
+正常停止：微信说“桥：停止这个会话的桥接模式”，WorkBuddy 调用 awei_release。成功会关闭本桥的 ACP 与 Codex 业务连接、保留本地历史及回执，然后先返回 released:true 再退出；并非“只解除转发但还持有业务连接”。有 running 回执则返回 job-running；有审批、业务状态不明或清理失败则返回 unknown 并保留锁。
+
+默认 `handoverGraceSeconds: 180` 写入 relay.handover.json。窗口内普通重拉拒绝启动；新会话临时加 --take-over 可立即启动。接管后移除临时参数，以便下一次主动释放仍能挡住旧宿主自动重拉。窗口过期后普通启动恢复正常；配置 0 表示关闭窗口。
+
+锁 JSON 包含 v、pid、startedAt、host、version，另含 acquiredAt 和本地控制接口身份。startedAt 使用操作系统进程出生时间，acquiredAt 才是取得锁的时间，避免 Node 加载耗时导致误判。ESRCH 才视为已死；EPERM 视为非本用户存活，启动时间差超过 2 秒或不可读取视为 unknown。不会向身份不明/复用的 PID 发信号，包括 --force；需人工核实。旧空锁仅显式接管，检测到同配置旧进程则拒绝。
+
+显式强制接管只对身份匹配的 owner 发 SIGTERM，等待最多 5 秒；再次验证身份后才发 SIGKILL，并确认退出后接锁。旧锁归档为 relay.lock.reclaimed-时间戳-随机后缀。若旧进程自行删锁，仍保留接管前读取的元数据副本。状态检查与错误输出不暴露控制令牌。
+
+为防止多个新进程同时“看见死锁→改名→创建”，同一规范化 storageDir 使用固定散列的 127.0.0.1 控制端口进行内核仲裁；进程被强杀后端口由系统释放。控制接口只接受匹配 instanceId 与随机令牌的释放请求，不接受任意 Shell。端口碰撞或本地监听受限会明确拒绝启动，不绕过独占检查。--release 通过该接口请求原进程，不能仅靠磁盘回执判定忙闲。
+
+diagnostics.log 固定记录 lock:acquired、lock:released、lock:reclaimed-stale、lock:takenover；清理异常另记 lock:release-failed。不要分享包含控制令牌的原始锁文件；给团队使用 --lock-status 输出即可。
+
+自动化验证覆盖实际子进程 SIGKILL 后启动自愈、活 owner 拒绝、SIGTERM/SIGKILL 接管、并发恢复唯一 owner、PID 复用/EPERM、空锁迁移、忙碌释放拒绝、MCP 回包后退出、CLI IPC 释放、grace 拒绝/到期/显式覆盖以及回执回归。模型会话的上下文增长与轮换是独立后续事项，不由本版锁机制解决。

@@ -36,6 +36,7 @@ export class DedicatedCore {
       off: async () => { await this.router.handle(this.user, "/acp off", async () => {}); return "已取消业务目标。下一条无前缀消息交给阿维，WorkBuddy 不接管回答。"; },
     });
   }
+  async assertReleasable() { await this.router.assertIdleForDisconnect(); }
   async close() { await this.assistant.close(); await this.router.close(); }
   async run(input: RelayInput, emit: (event: RelayEvent) => void) {
     const reply = async (text: string) => { emit({ type: "text", text }); };
