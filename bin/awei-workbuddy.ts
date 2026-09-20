@@ -14,6 +14,7 @@ const configSchema = z.object({
   agent: z.object({ command: z.string().min(1), args: z.array(z.string()), cwd: z.string(), env: z.record(z.string(), z.string()).optional() }),
   codexServer: z.object({ command: z.string(), args: z.array(z.string()).optional(), env: z.record(z.string(), z.string()).optional() }),
   storageDir: z.string(), handoverGraceSeconds: z.number().int().min(0).max(86400).default(180), attachmentRoots: z.array(z.string()).default([]),
+  aweiRotation: z.object({ usageRatio: z.number().gt(0).lt(1).optional(), maxCalls: z.number().int().positive().optional(), maxCharacters: z.number().int().positive().optional() }).optional(),
 });
 async function main() {
   const args = process.argv.slice(2), flags = new Set(args.filter(a => a.startsWith("--")));

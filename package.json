@@ -1,6 +1,6 @@
 {
   "name": "acp-wechat-connector",
-  "version": "0.15.0",
+  "version": "0.16.0",
   "description": "Personal WeChat remote handoff for Codex desktop sessions",
   "type": "module",
   "files": [

@@ -1,6 +1,6 @@
 # WorkBuddy 专用会话 → 阿维
 
-版本：v0.15.0。此文替代上一版混合分流方案。已实现本地 MCP 接入和自动测试；WorkBuddy 微信侧的实际调用与媒体交付尚需在专用会话验收。
+版本：v0.16.0。此文替代上一版混合分流方案。已实现本地 MCP 接入和自动测试；WorkBuddy 微信侧的实际调用与媒体交付尚需在专用会话验收。
 
 ## 产品边界
 
@@ -118,3 +118,7 @@ node /path/to/dist/bin/awei-workbuddy.js /path/to/relay-config.json --take-over 
 diagnostics.log 固定记录 lock:acquired、lock:released、lock:reclaimed-stale、lock:takenover；清理异常另记 lock:release-failed。不要分享包含控制令牌的原始锁文件；给团队使用 --lock-status 输出即可。
 
 自动化验证覆盖实际子进程 SIGKILL 后启动自愈、活 owner 拒绝、SIGTERM/SIGKILL 接管、并发恢复唯一 owner、PID 复用/EPERM、空锁迁移、忙碌释放拒绝、MCP 回包后退出、CLI IPC 释放、grace 拒绝/到期/显式覆盖以及回执回归。模型会话的上下文增长与轮换是独立后续事项，不由本版锁机制解决。
+
+## v0.16.0 管理上下文轮换
+
+阿维 ACP 管理会话现在按用量及调用/字符上限自动轮换；这不解决 WorkBuddy 宿主自身会话的上下文长度。正常转交“阿维，上下文状态”即可查询，不由 WorkBuddy 猜测百分比。配置和验收见 [上下文轮换指南](awei-context-rotation.md)。

@@ -12,7 +12,7 @@ import { deliverAttachments, type CodexInput } from "../codex/attachments.js";
 import { quitCodexDesktop, startCodexDesktop } from "../codex/desktop.js";
 import { userError } from "../errors.js";
 import type { RelayEvent, RelayInput } from "./jobs.js";
-export interface RelayConfig { agent: LanguageConfig; codexServer: CodexServerConfig; storageDir: string; attachmentRoots: string[] }
+export interface RelayConfig { agent: LanguageConfig; codexServer: CodexServerConfig; storageDir: string; attachmentRoots: string[]; aweiRotation?: import("../awei/model.js").RotationOptions }
 export class DedicatedCore {
   readonly router: CodexRouter;
   private model: AcpLanguageService;
@@ -23,7 +23,7 @@ export class DedicatedCore {
   constructor(private config: RelayConfig) {
     this.router = CodexRouter.create(config.codexServer, config.agent.cwd);
     this.router.configureInternalSessions(config.storageDir);
-    this.model = new AcpLanguageService({ ...config.agent, cwd: path.join(config.storageDir, "awei-workspace") }, id => this.router.hideAssistantSession(id));
+    this.model = new AcpLanguageService({ ...config.agent, cwd: path.join(config.storageDir, "awei-workspace") }, id => this.router.hideAssistantSession(id), 90_000, config.aweiRotation);
     this.assistant = new AweiController(this.model, this.router, {
       release: async () => { const n = await this.router.releaseAll(); return `已释放 ${n} 个业务会话，历史保留。`; },
       quit: () => quitCodexDesktop(config.codexServer.command),

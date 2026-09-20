@@ -1,6 +1,6 @@
 # 阿维 · WorkHub 助手
 
-ACP WeChat Connector · v0.15.0
+ACP WeChat Connector · v0.16.0
 
 团队成员从这里开始：[安装、更新与完整体验指南](docs/team-guide.md)。
 
@@ -132,7 +132,7 @@ node dist/bin/wechat-acp.js --config config.local.json --instance personal-codex
 
 ## 验证与边界
 
-- 当前 macOS 构建与测试：301 项通过，1 项 Windows 专用测试跳过。
+- 当前 macOS 构建与测试：307 项通过，1 项 Windows 专用测试跳过。
 - 隔离的真实 App Server 测试验证：第二服务先因写入锁无法接管，释放后可恢复同一个测试会话；无需调用模型。
 - 2026-09-20 用户实机验收：退出桌面后阿维保持正常，重新启动桌面后 Remote 恢复；独立兜底监视器检测到恢复后退出。这不等于所有附件与自动化场景均已验收。
 - 真实 ACP 模型冒烟验证通过：自然语言查找 → 选择第一个 → 读取五轮；业务会话和退出动作使用测试替身，不会操作正式会话。
@@ -174,3 +174,7 @@ node scripts/awei-smoke.mjs config.local.json
 ### v0.15：WorkBuddy 连接器停止与接管
 
 新增 awei_release 与 --lock-status / --release / --take-over。进程崩溃后的已知死锁自动归档回收；活进程不会被默认终止。主动释放后有 180 秒交接窗口，长任务拒绝释放。显式 --force 仅用于用户要求中断旧进程的场景，不能放进默认配置。参见 [专用会话停止与接管](docs/workbuddy-integration-proposal.md)。
+
+### 阿维上下文自动轮换（v0.16.0）
+
+腾讯 iLink 与 WorkBuddy 下，阿维默认在上下文用量达到 75% 后，于下一条请求前更新自己的管理会话；另有 80 次模型调用 / 240000 累计字符上限。业务会话、当前候选与查阅状态保留，执行中不轮换，不重放确认。微信发送“阿维，上下文状态”查看。配置与测试过程见 [上下文轮换指南](docs/awei-context-rotation.md)。

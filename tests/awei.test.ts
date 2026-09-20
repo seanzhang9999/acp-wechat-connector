@@ -48,6 +48,41 @@ test("ACP plans search actual candidates then select without starting a business
   assert.match(f.prompts[1], /埃及旅行/);
   await f.router.close();
 });
+test("request boundaries retain candidates/history/confirmation and bound recent context across fresh models", async () => {
+  const rpc = new Backend(), router = new CodexRouter(rpc, "/work");
+  const plans = [{ action: "search", query: "埃及" }, { action: "select", ref: "1" }, { action: "history", count: 10 }, { action: "history", count: 10, earlier: true }, { action: "quit" }, { action: "current" }];
+  const prompts: any[] = []; let boundaries = 0, quits = 0;
+  const ctl = new AweiController({ async beginRequest() { boundaries++; }, async ask(p) {
+    prompts.push(JSON.parse(p.split("本次输入（JSON数据）：\n")[1])); return JSON.stringify(plans.shift());
+  }, async close() {} }, router, { async release() { return ""; }, async quit() { quits++; return "quit"; }, async off() { return ""; } });
+  const reply = async () => {};
+  try {
+    await ctl.handle("u", "找到埃及并切换", reply);
+    assert.equal(boundaries, 1, "two model steps share one user boundary");
+    await ctl.handle("u", "看看最近对话", reply);
+    await ctl.handle("u", "继续往前看", reply);
+    assert.equal(rpc.calls.at(-1)!.params.cursor, "older");
+    assert.equal(prompts.at(-1).context.current.id, "A");
+    assert.equal(prompts.at(-1).context.candidates[0].id, "A");
+    assert.equal(prompts.at(-1).recent[0].request, "找到埃及并切换");
+    await ctl.handle("u", "关闭桌面", reply);
+    const expiry = (ctl as any).pending.get("u").expires;
+    await ctl.handle("u", "当前是谁", reply);
+    assert.equal((ctl as any).pending.has("u"), false, "normal request cancels pending exactly as before");
+    assert.ok(expiry > Date.now());
+    assert.equal(prompts.at(-1).recent.length, 3);
+    (ctl as any).pending.set("u", { action: "quit", expires: Date.now() + 10000 });
+    await ctl.handle("u", "确认退出", reply);
+    await ctl.handle("u", "确认退出", reply);
+    assert.equal(quits, 1, "fresh boundary cannot replay prior confirmation");
+    (ctl as any).pending.set("u", { action: "quit", expires: 1 });
+    await ctl.handle("u", "确认退出", reply); assert.equal(quits, 1, "rotation does not renew expiry");
+    await ctl.handle("u", "收到" + "啦".repeat(2000), reply);
+    assert.ok((ctl as any).recent.get("u").every((x: any) => x.request.length < 930));
+    await ctl.handle("other", "帮助", reply);
+    assert.equal((ctl as any).recent.get("other").length, 1);
+  } finally { await ctl.close(); await router.close(); }
+});
 test("unknown IDs and arbitrary shell/action fields are rejected", async () => {
   assert.throws(() => parsePlan('{"action":"shell","command":"rm"}'));
   assert.throws(() => parsePlan('{"action":"select","ref":"A","command":"rm"}'));

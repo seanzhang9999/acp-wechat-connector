@@ -521,7 +521,7 @@ export class WeChatAcpBridge {
     if (!this.awei) {
       const router = this.codexRouter!;
       const model = new AcpLanguageService({ ...this.config.agent,
-        cwd: path.join(this.config.storage.dir, "awei-workspace") }, id => router.hideAssistantSession(id));
+        cwd: path.join(this.config.storage.dir, "awei-workspace") }, id => router.hideAssistantSession(id), 90_000, this.config.awei?.rotation);
       this.awei = new AweiController(model, router, {
         release: () => this.releaseBridgeSessions(),
         quit: () => this.quitDesktop(),

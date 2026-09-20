@@ -3,7 +3,7 @@ import { execFileSync } from "node:child_process";
 import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 import net from "node:net";
 import path from "node:path";
-export const RELAY_VERSION = "0.15.0";
+export const RELAY_VERSION = "0.16.0";
 export interface Owner { v: 1; pid: number; startedAt: string; acquiredAt?: string; host: "awei-dedicated-session"; version: string; instanceId?: string; controlPort?: number; controlToken?: string }
 export type Liveness = "dead" | "alive" | "alive-foreign" | "unknown" | "legacy-unknown";
 export class LockError extends Error { exitCode = 2; }

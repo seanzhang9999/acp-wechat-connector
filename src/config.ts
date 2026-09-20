@@ -116,7 +116,7 @@ export interface WeChatAcpConfig {
   /** Opt-in direct Codex App Server command routing. */
   codexServer?: import("./codex/client.js").CodexServerConfig;
   /** 阿维 natural-language control, enabled with codexServer unless disabled. */
-  awei?: { enabled?: boolean };
+  awei?: { enabled?: boolean; rotation?: import("./awei/model.js").RotationOptions };
   /**
    * Optional user-defined aliases for bridge slash commands. Maps a
    * canonical command (e.g. `"/acp-cancel"`) to one or more custom
