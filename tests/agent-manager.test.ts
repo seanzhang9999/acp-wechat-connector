@@ -30,6 +30,7 @@ test("spawnAgent aborts an agent stuck during ACP initialization", async () => {
 function fakeAgentScript(opts: {
   loadSession: boolean;
   loadErrorCode?: number;
+  loadErrorDetails?: string;
 }): string {
   return `
     const readline = require("node:readline");
@@ -70,7 +71,7 @@ function fakeAgentScript(opts: {
         send({
           jsonrpc: "2.0",
           id: request.id,
-          error: { code: ${opts.loadErrorCode}, message: "load failed" },
+          error: { code: ${opts.loadErrorCode}, message: "load failed", data: { details: ${JSON.stringify(opts.loadErrorDetails ?? "")} } },
         });`
         }
       } else if (request.method === "session/new") {
@@ -215,4 +216,19 @@ test("spawnAgent off mode ignores a persisted session", async () => {
   } finally {
     killAgent(info.process);
   }
+});
+
+
+test("writer conflict explains handoff and never creates a replacement session", async () => {
+  await assert.rejects(spawnAgent({
+    command: process.execPath,
+    args: ["-e", fakeAgentScript({ loadSession: true, loadErrorCode: -32603, loadErrorDetails: "thread saved-session already has an active writer" })],
+    cwd: process.cwd(), client: makeClient([]), resumePolicy: "auto", persistedSessionId: "saved-session", log: () => {},
+  }), (error: unknown) => {
+    assert.ok(error instanceof Error);
+    assert.match(error.message, /另一个 Codex 服务占用/);
+    assert.match(error.message, /此次消息未送入会话/);
+    assert.ok(error.cause);
+    return true;
+  });
 });

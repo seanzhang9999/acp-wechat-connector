@@ -214,6 +214,15 @@ export async function spawnAgent(params: {
   }
 
   function normalizeError(err: unknown): Error {
+    const details = typeof err === "object" && err !== null && "data" in err
+      && typeof err.data === "object" && err.data !== null && "details" in err.data
+      && typeof err.data.details === "string" ? err.data.details : "";
+    if (/already has an active writer/i.test(details)) {
+      return new Error(
+        "该会话正被另一个 Codex 服务占用，微信暂时无法接管。若在电脑上使用，请继续在电脑操作；若要转到微信，请在微信发送 /acp codex quit 正常退出桌面，确认退出后再重新发送原消息。此次消息未送入会话。",
+        { cause: err },
+      );
+    }
     if (err instanceof Error) return err;
     if (
       typeof err === "object" &&
