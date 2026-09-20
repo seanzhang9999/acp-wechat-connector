@@ -56,6 +56,20 @@ test("grace blocks restarts, explicit takeover overrides and expiry permits norm
  try{await assert.rejects(lock.acquire(),/--take-over/);await lock.acquire({takeOver:true});lock.release("test",0);await lock.closeGate();await lock.acquire();lock.release("test");}
  finally{await lock.closeGate();rmSync(d,{recursive:true,force:true});}
 });
+test("claim is standby under a live owner without touching the lock, and owns when free",async()=>{
+ const d=dir(),lock=new RelayLock(d);
+ try{
+  const holder=new RelayLock(d);await holder.acquire();
+  const standby=await lock.claim();
+  assert.equal(standby.kind,"standby");
+  if(standby.kind==="standby"){assert.equal(standby.holder?.pid,process.pid);assert.equal(standby.holder?.alive,true);}
+  assert.equal(lockStatus(d).lock?.holderPid,process.pid); // untouched by the standby claim
+  await holder.closeGate();holder.release("test");
+  const own=await lock.claim({bypassGrace:true});
+  assert.equal(own.kind,"owner");
+  lock.release("test");
+ } finally{await lock.closeGate();rmSync(d,{recursive:true,force:true});}
+});
 test("CLI control request asks real owner to release; no owner never deletes files",async()=>{
  const d=dir(),lock=new RelayLock(d);await lock.acquire();const life=new RelayLifecycle(lock,{hasRunning:()=>false},{close:async()=>{}},0);
  lock.onRelease(r=>life.release(r),()=>{});

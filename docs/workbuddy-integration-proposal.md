@@ -1,6 +1,6 @@
 # WorkBuddy 专用会话 → 阿维
 
-版本：v0.16.0。此文替代上一版混合分流方案。已实现本地 MCP 接入和自动测试；WorkBuddy 微信侧的实际调用与媒体交付尚需在专用会话验收。
+版本：v0.17.0。此文替代上一版混合分流方案。已实现本地 MCP 接入和自动测试；用户已反馈完成会话控制权交接实测，媒体呈现及并发异常不能据此视为全部验收。
 
 ## 产品边界
 
@@ -21,7 +21,7 @@ flowchart LR
 
 ## 已实现
 
-- `bin/awei-workbuddy.ts`：持久 stdio MCP 连接，四个工具 `awei_message`、`awei_poll`、`awei_status`、`awei_release`。
+- `bin/awei-workbuddy.ts`：持久 stdio MCP 连接，六个工具 `awei_message`、`awei_poll`、`awei_status`、`awei_release`、`awei_transfer`、`awei_acquire`。
 - `src/workbuddy/core.ts`：独立阿维实例，复用正文检索、连续阅读、业务路由、受保护的桌面交接、双向附件和形象图。
 - `src/workbuddy/jobs.ts`：原文消息回执、相同编号幂等、执行期间拒绝并行提交、事件游标、磁盘保存和重启后未知状态提示。
 - `connectors/workbuddy/skills/awei-session/SKILL.md`：仅为明确启用的专用会话服务，全量转交，不影响其他会话。
@@ -90,7 +90,9 @@ storageDir 使用带 PID/启动时间/版本的独占锁。已死 owner 在启�
 回传正文不再要求显示 receiptId 或逐项事件清单。收到 done 且无更多事件后停止查询；旧失败回执不会因升级变成成功，也不会自动重放。
 
 
-## v0.15.0 主动释放与显式接管
+## v0.15.0 主动释放与显式接管（历史说明）
+
+以下宽限窗口说明适用于旧版；v0.17.0 普通 MCP 领取会跳过宽限，当前操作请见文末 v0.17.0 流程。
 
 普通启动保持配置文件路径不变。以下示意命令中的两个路径需替换为本机实际值：
 
@@ -122,3 +124,17 @@ diagnostics.log 固定记录 lock:acquired、lock:released、lock:reclaimed-stal
 ## v0.16.0 管理上下文轮换
 
 阿维 ACP 管理会话现在按用量及调用/字符上限自动轮换；这不解决 WorkBuddy 宿主自身会话的上下文长度。正常转交“阿维，上下文状态”即可查询，不由 WorkBuddy 猜测百分比。配置和验收见 [上下文轮换指南](awei-context-rotation.md)。
+
+## v0.17.0 会话控制权交接
+
+本节替代上文旧版交接步骤。现有 owner 可执行 awei_transfer，生成 6 位、10 分钟有效转移码；目标会话执行 awei_acquire({code})，请求旧 owner 正常释放并尝试取得独占锁。随后 awei_status 必须显示 owner。任务运行中拒绝交接。
+
+在旧会话发送：“桥：核对当前 owner 和任务状态，空闲时生成阿维转移码。”
+
+在新会话发送：“桥：接管 XXXXXX。调用 awei_acquire 后，再用 awei_status 确认 owner，成功后将本会话作为阿维专用桥。”请用实际转移码替换占位符。
+
+无人持有时 awei_acquire 不需码。第二个 MCP 进程在锁被占用时仍能启动为 standby，工具保持可见；普通启动/消息领取跳过旧宽限窗口。原会话退出桥接可调用 awei_release；只想换会话时优先用转移码。
+
+安装专用 Skill 同时必须配置并信任 MCP，六个工具应可见：awei_message、awei_poll、awei_status、awei_release、awei_transfer、awei_acquire。不要只凭版本字符串推定工具已重新加载。
+
+用户于 2026-09-20 反馈交接实测完成。当前实例边界、竞争窗口和未来 awiki 接入见 [多入口架构评估](awei-multi-entry.md)。

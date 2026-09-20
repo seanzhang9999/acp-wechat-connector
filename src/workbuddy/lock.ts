@@ -3,9 +3,11 @@ import { execFileSync } from "node:child_process";
 import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 import net from "node:net";
 import path from "node:path";
-export const RELAY_VERSION = "0.16.0";
+export const RELAY_VERSION = "0.17.0";
 export interface Owner { v: 1; pid: number; startedAt: string; acquiredAt?: string; host: "awei-dedicated-session"; version: string; instanceId?: string; controlPort?: number; controlToken?: string }
 export type Liveness = "dead" | "alive" | "alive-foreign" | "unknown" | "legacy-unknown";
+export type StandbyHolder = { pid: number; version: string; startedAt: string; alive: boolean | null } | null;
+export type ClaimResult = { kind: "owner" } | { kind: "standby"; holder: StandbyHolder; detail: string };
 export class LockError extends Error { exitCode = 2; }
 export function processStart(pid: number): number | null {
   try {
@@ -107,7 +109,7 @@ export class RelayLock {
     while (Date.now() < deadline) { if (ownerLiveness(owner) === "dead") return; await new Promise(r => setTimeout(r, 50)); }
     throw new LockError("原进程尚未确认退出，未接管。");
   }
-  async acquire(options: { takeOver?: boolean; force?: boolean; legacyActive?: () => boolean } = {}) {
+  async acquire(options: { takeOver?: boolean; force?: boolean; bypassGrace?: boolean; legacyActive?: () => boolean } = {}) {
     if (options.force && !options.takeOver) throw new LockError("--force 必须和 --take-over 同时使用。");
     mkdirSync(this.dir, { recursive: true, mode: 0o700 });
     let before = this.read();
@@ -120,7 +122,7 @@ export class RelayLock {
     try {
       await this.listen();
       const graceFile = path.join(this.dir, "relay.handover.json");
-      if (!options.takeOver && existsSync(graceFile)) {
+      if (!options.takeOver && !options.bypassGrace && existsSync(graceFile)) {
         let grace: { releasedAt: string; graceSeconds: number };
         try { grace = JSON.parse(readFileSync(graceFile, "utf8")); } catch { throw new LockError("交接记录损坏；核对后使用 --take-over。"); }
         if (!Number.isFinite(Date.parse(grace.releasedAt)) || !Number.isFinite(grace.graceSeconds)) throw new LockError("交接记录无效；核对后使用 --take-over。");
@@ -145,12 +147,46 @@ export class RelayLock {
         instanceId: randomUUID(), controlPort: this.port(), controlToken: randomUUID() };
       const fd = openSync(this.file, "wx", 0o600);
       try { writeFileSync(fd, JSON.stringify(this.owner)); } finally { closeSync(fd); }
-      if (options.takeOver && existsSync(graceFile)) renameSync(graceFile, graceFile + ".consumed-" + randomUUID().slice(0, 8));
+      if ((options.takeOver || options.bypassGrace) && existsSync(graceFile)) renameSync(graceFile, graceFile + ".consumed-" + randomUUID().slice(0, 8));
       audit(this.dir, "lock:acquired", { pid: process.pid, version: RELAY_VERSION });
     } catch (error) { await this.closeGate(); throw error; }
   }
-  onRelease(handler: (reason: string) => Promise<ReleaseResult>, afterResponse: () => void) { this.releaseHandler = handler; this.afterRelease = afterResponse; }
-  owns() { return !!this.owner && this.read()?.owner?.instanceId === this.owner.instanceId; }
+  /** Standby-aware claim: never throws. Returns "owner" on success, otherwise "standby" with holder detail.
+   * A standby claimant must not bind the control port, write the lock, or construct business resources. */
+  async claim(options: { bypassGrace?: boolean; legacyActive?: () => boolean } = {}): Promise<ClaimResult> {
+    const holder = (snapshot: { owner: Owner | null } | null): StandbyHolder => {
+      if (!snapshot?.owner) return null;
+      const state = ownerLiveness(snapshot.owner);
+      return { pid: snapshot.owner.pid, version: snapshot.owner.version, startedAt: snapshot.owner.startedAt, alive: state === "dead" ? false : state === "alive" || state === "alive-foreign" ? true : null };
+    };
+    const current = this.read();
+    if (current) {
+      const state = ownerLiveness(current.owner);
+      if (state === "alive") return { kind: "standby", holder: holder(current), detail: `写权限由 PID ${current.owner!.pid} 的会话持有（${current.owner!.version}）。` };
+      if (state === "unknown" || state === "alive-foreign") return { kind: "standby", holder: holder(current), detail: `PID ${current.owner!.pid} 的身份或权限无法核实；未接管，请人工核对。` };
+      if (state === "legacy-unknown") return { kind: "standby", holder: null, detail: "存在旧版零字节锁；需显式 --take-over 一次性迁移，本进程保持待命。" };
+    }
+    try {
+      let lastError: unknown;
+      for (let attempt = 0; attempt < 12; attempt++) {
+        try {
+          await this.acquire({ bypassGrace: options.bypassGrace, legacyActive: options.legacyActive });
+          return { kind: "owner" };
+        } catch (error) {
+          lastError = error;
+          const message = error instanceof Error ? error.message : "";
+          // A just-released holder keeps the control port bound for a few dozen ms while exiting.
+          if (!/控制端口|并发启动/.test(message)) break;
+          await new Promise(resolve => setTimeout(resolve, 100));
+        }
+      }
+      throw lastError;
+    } catch (error) {
+      await this.closeGate();
+      return { kind: "standby", holder: holder(this.read()), detail: error instanceof Error ? error.message : "未能取得写权限" };
+    }
+  }
+  onRelease(handler: (reason: string) => Promise<ReleaseResult>, afterResponse: () => void) { this.releaseHandler = handler; this.afterRelease = afterResponse; }  owns() { return !!this.owner && this.read()?.owner?.instanceId === this.owner.instanceId; }
   release(reason: string, graceSeconds?: number) {
     if (!this.owns()) throw new LockError("锁已不属于本进程，未删除。");
     if (graceSeconds !== undefined) {

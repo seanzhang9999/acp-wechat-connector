@@ -1,16 +1,31 @@
 # 阿维 · WorkHub 助手
 
-ACP WeChat Connector · v0.16.0
+ACP WeChat Connector · v0.17.0
 
 团队成员从这里开始：[安装、更新与完整体验指南](docs/team-guide.md)。
 
-WorkBuddy 专用会话接入：[安装与全量转交说明](docs/workbuddy-integration-proposal.md)。v0.14.0 已提供本地 MCP 与专用 Skill；手机端需按指南验收。
+WorkBuddy 专用会话接入：[安装与全量转交说明](docs/workbuddy-integration-proposal.md)。v0.17.0 支持 owner／standby 与转移码交接；用户已反馈完成会话交接测试。
 
 通过微信远程继续 Mac 上的 Codex 会话，回到电脑后再交回 Codex 桌面 App。
 
 这个项目面向个人使用：不需要引入 VS Code，也不要求微信和桌面同时控制一个会话。出门后在微信退出 Codex 桌面，选择原会话继续；回到本地前释放桥接持有的会话，再打开桌面继续工作。会话沿用同一份本地历史。
 
 基于 [formulahendry/wechat-acp](https://github.com/formulahendry/wechat-acp) 扩展，保留上游 MIT 许可和历史。上游负责微信 iLink 通道、ACP Agent 接入及媒体传输；本项目增加 Codex 会话选择、App Server 生命周期管理、目标会话附件路由，以及 macOS 桌面退出命令。原始使用说明见 [README.upstream.md](README.upstream.md)。
+
+## 两种使用方式
+
+| 方式 | 怎么接入 | 日常怎么用 |
+| --- | --- | --- |
+| 微信扫码直连（iLink → ACP） | 运行桥接、配置 ACP Agent，微信扫码登录 | 以“阿维”唤醒助手，搜索/切换/查阅 Codex 会话；普通消息按当前业务路由转交 |
+| WorkBuddy 专用会话 | 安装阿维 MCP 连接器与专用 Skill，授权连接器，把一个 WorkBuddy 会话设为阿维桥 | 在该会话或其微信入口发消息，WorkBuddy 原样转交阿维；其他 WorkBuddy 会话不受影响 |
+
+两种方式中的阿维管理会话都会自动轮换：默认上下文用量达到 75%，或累计达到 80 次模型调用 / 240000 字符，在下一条请求前创建新管理会话；业务会话不随之重建。发送“阿维，上下文状态”查看。此能力不负责轮换 WorkBuddy 宿主自身的聊天会话。
+
+WorkBuddy 不能只安装 Skill：还需安装并信任 MCP 连接器。v0.17.0 中同一状态目录只允许一个 owner，其余连接待命。旧会话执行 `awei_transfer` 生成 10 分钟有效转移码，新会话执行 `awei_acquire` 凭码接管，随后用 `awei_status` 确认 owner。
+
+**当前两路是相同能力的独立实例，并非已经接到一个共享阿维服务。** 可以同时在线，但不会同步目标、候选和查阅进度；同一 Codex 业务会话仍只能有一个服务持有写权限。WorkBuddy 的唯一控制权不覆盖 iLink 或桌面。跨入口继续工作时，先在原入口完成任务并释放，再到新入口明确选择同一业务会话；不要并发控制桌面启动/退出。
+
+详见 [多入口架构评估与 awiki 客户端演进](docs/awei-multi-entry.md)、[团队安装指南](docs/team-guide.md)、[WorkBuddy 接管步骤](docs/workbuddy-integration-proposal.md#v0170-会话控制权交接)。
 
 ## 阿维：直接用自然语言管理会话
 
@@ -132,7 +147,7 @@ node dist/bin/wechat-acp.js --config config.local.json --instance personal-codex
 
 ## 验证与边界
 
-- 当前 macOS 构建与测试：307 项通过，1 项 Windows 专用测试跳过。
+- 当前 macOS 构建与测试：312 项通过，1 项 Windows 专用测试跳过。
 - 隔离的真实 App Server 测试验证：第二服务先因写入锁无法接管，释放后可恢复同一个测试会话；无需调用模型。
 - 2026-09-20 用户实机验收：退出桌面后阿维保持正常，重新启动桌面后 Remote 恢复；独立兜底监视器检测到恢复后退出。这不等于所有附件与自动化场景均已验收。
 - 真实 ACP 模型冒烟验证通过：自然语言查找 → 选择第一个 → 读取五轮；业务会话和退出动作使用测试替身，不会操作正式会话。
@@ -173,7 +188,7 @@ node scripts/awei-smoke.mjs config.local.json
 
 ### v0.15：WorkBuddy 连接器停止与接管
 
-新增 awei_release 与 --lock-status / --release / --take-over。进程崩溃后的已知死锁自动归档回收；活进程不会被默认终止。主动释放后有 180 秒交接窗口，长任务拒绝释放。显式 --force 仅用于用户要求中断旧进程的场景，不能放进默认配置。参见 [专用会话停止与接管](docs/workbuddy-integration-proposal.md)。
+新增 awei_release 与 --lock-status / --release / --take-over。进程崩溃后的已知死锁自动归档回收；活进程不会被默认终止。v0.15 的主动释放有 180 秒交接窗口；v0.17 的普通 MCP 领取会跳过该窗口，应优先使用转移码。长任务拒绝释放。显式 --force 仅用于用户要求中断旧进程的场景，不能放进默认配置。参见 [专用会话停止与接管](docs/workbuddy-integration-proposal.md)。
 
 ### 阿维上下文自动轮换（v0.16.0）
 
