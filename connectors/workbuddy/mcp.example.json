@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "awei-dedicated-session": {
+      "type": "stdio",
+      "command": "/absolute/path/to/node",
+      "args": ["/absolute/path/to/acp-wechat-connector/dist/bin/awei-workbuddy.js", "/absolute/path/to/private/relay-config.json"]
+    }
+  }
+}

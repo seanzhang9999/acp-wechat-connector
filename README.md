@@ -1,10 +1,10 @@
 # 阿维 · WorkHub 助手
 
-ACP WeChat Connector · v0.13.2
+ACP WeChat Connector · v0.14.0
 
 团队成员从这里开始：[安装、更新与完整体验指南](docs/team-guide.md)。
 
-替代微信接入方案：[阿维 × WorkBuddy 连接器设计（尚未实现）](docs/workbuddy-integration-proposal.md)。
+WorkBuddy 专用会话接入：[安装与全量转交说明](docs/workbuddy-integration-proposal.md)。v0.14.0 已提供本地 MCP 与专用 Skill；手机端需按指南验收。
 
 通过微信远程继续 Mac 上的 Codex 会话，回到电脑后再交回 Codex 桌面 App。
 

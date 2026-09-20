@@ -107,6 +107,7 @@ export class CodexRouter {
   static create(config: CodexServerConfig, cwd: string): CodexRouter {
     return new CodexRouter(new CodexRpc(config), cwd, config.turnTimeoutMs);
   }
+  hasPendingReply(): boolean { return !!(this.flights.size || this.delivering.size); }
   async assertReleasable(): Promise<number> {
     if (this.releasing || this.flights.size || this.delivering.size || this.approvals.size)
       throw new Error("目标路由有执行中任务、审批或附件传输，请完成后再释放。");
