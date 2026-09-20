@@ -1,6 +1,6 @@
 # 阿维 · WorkHub 助手
 
-ACP WeChat Connector · v0.13.1
+ACP WeChat Connector · v0.13.2
 
 团队成员从这里开始：[安装、更新与完整体验指南](docs/team-guide.md)。
 
@@ -30,6 +30,10 @@ ACP WeChat Connector · v0.13.1
 普通消息保留原路由；无选定目标时进入原 ACP 聊天。需要将唤醒词或 `/acp` 字样作为业务内容时，可用 `转给当前会话：...`。原精确命令仍可使用。阿维失败时不会把管理请求当业务问题转发。
 
 启用 `codexServer` 后默认启用阿维，可用 `"awei": { "enabled": false }` 关闭。第一版适配提供 `read-only` 会话模式的 ACP Agent，已用配置的 `@agentclientprotocol/codex-acp` 做真实模型验证；其他 Agent 需要适配其能力。详情见 [阿维 v1 设计与边界](docs/wechat-assistant-design.md)。
+
+## 阿维的形象反馈
+
+发送“阿维，你能做什么”时，帮助文字后会附上欢迎图；处理超过 10 秒时会附上一张工作图。每位用户每种图半小时最多发送一次，快速回复、确认结果和错误说明以文字为主。图片失败不改变管理动作或文字结果。网页版演示也使用这两张原图。
 
 ## 当前功能价值
 
@@ -126,7 +130,7 @@ node dist/bin/wechat-acp.js --config config.local.json --instance personal-codex
 
 ## 验证与边界
 
-- 当前 macOS 构建与测试：277 项通过，1 项 Windows 专用测试跳过。
+- 当前 macOS 构建与测试：281 项通过，1 项 Windows 专用测试跳过。
 - 隔离的真实 App Server 测试验证：第二服务先因写入锁无法接管，释放后可恢复同一个测试会话；无需调用模型。
 - 2026-09-20 用户实机验收：退出桌面后阿维保持正常，重新启动桌面后 Remote 恢复；独立兜底监视器检测到恢复后退出。这不等于所有附件与自动化场景均已验收。
 - 真实 ACP 模型冒烟验证通过：自然语言查找 → 选择第一个 → 读取五轮；业务会话和退出动作使用测试替身，不会操作正式会话。

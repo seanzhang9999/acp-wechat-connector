@@ -7,6 +7,7 @@ import { userError } from "./errors.js";
  */
 
 import path from "node:path";
+import { AweiPresentation, brandImage } from "./awei/presentation.js";
 import { aweiIngress } from "./awei/ingress.js";
 import { AweiController } from "./awei/controller.js";
 import { AcpLanguageService } from "./awei/model.js";
@@ -131,6 +132,7 @@ export class WeChatAcpBridge {
 
   private codexRouter?: CodexRouter;
   private awei?: AweiController;
+  private aweiPresentation = new AweiPresentation();
 
   constructor(config: WeChatAcpConfig, log?: (msg: string) => void) {
     this.config = config;
@@ -413,7 +415,11 @@ export class WeChatAcpBridge {
       const current = previous.catch(() => {}).then(async () => {
         const ingress = this.codexRouter && this.config.awei?.enabled !== false ? aweiIngress(msg) : { kind: "unchanged" as const };
         if (ingress.kind === "assistant") {
-          await this.handleAwei(userId, ingress.text, response => this.sendReply(userId, contextToken, response));
+          const generation = this.messageGenerationForUser(userId);
+          await this.aweiPresentation.run(userId, ingress.text,
+            reply => this.handleAwei(userId, ingress.text, reply),
+            response => this.sendReply(userId, contextToken, response),
+            async kind => this.sendImageReply(userId, contextToken, await brandImage(kind), generation));
           return;
         }
         if (ingress.kind === "untranscribed") {
