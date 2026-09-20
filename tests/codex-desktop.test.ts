@@ -89,5 +89,5 @@ test("failed acknowledgement prevents an unreported quit; quit errors are visibl
   const g = bridge();
   g.b.quitDesktop = async () => { throw new Error("timeout"); };
   await g.b.handleMessage(message("/acp codex quit"));
-  assert.match(g.output[1], /退出未完成.*timeout/);
+  assert.match(g.output[1], /退出未完成[\s\S]*TIMEOUT-/);
 });

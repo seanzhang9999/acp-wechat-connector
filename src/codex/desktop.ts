@@ -99,3 +99,37 @@ export async function quitCodexDesktop(
   }
   throw new Error("正常退出等待超时：桌面 App 或其 App Server 仍在运行，不能确认会话已释放。可能有退出确认窗口或尚未结束的任务；未强制结束进程。");
 }
+
+export interface DesktopStartDeps {
+  platform: string;
+  snapshot(): Promise<DesktopProcess[]>;
+  identity(appPath: string): Promise<{ bundleId: string; executable: string }>;
+  launch(appPath: string): Promise<void>;
+  sleep(ms: number): Promise<void>;
+}
+const startDefaults: DesktopStartDeps = {
+  platform: defaults.platform, snapshot: defaults.snapshot, identity: defaults.identity, sleep: defaults.sleep,
+  async launch(appPath) { await exec('/usr/bin/open', ['-g', appPath], { timeout: 10000 }); },
+};
+/** Launch only the configured, bundle-verified app; never enable Remote or change login settings. */
+export async function startCodexDesktop(command: string, deps: DesktopStartDeps = startDefaults, attempts = 40): Promise<string> {
+  if (deps.platform !== 'darwin') throw new Error('此命令目前仅支持 macOS Codex 桌面 App。');
+  const suffix = '/Contents/Resources/codex';
+  if (!path.isAbsolute(command) || !command.endsWith(suffix)) throw new Error('需要配置 Codex 桌面 App 内的绝对 codex 路径，未启动任何程序。');
+  const appPath = command.slice(0, -suffix.length), identity = await deps.identity(appPath);
+  if (!appPath.endsWith('.app') || identity.bundleId !== 'com.openai.codex' || !identity.executable || path.basename(identity.executable) !== identity.executable)
+    throw new Error('目标不是已识别的 Codex 桌面 App，未启动任何程序。');
+  const mainPath = path.join(appPath, 'Contents/MacOS', identity.executable);
+  const before = await deps.snapshot();
+  const alreadyRunning = before.some(p => p.executable === mainPath);
+  if (!alreadyRunning) await deps.launch(appPath);
+  for (let i = 0; i < attempts; i++) {
+    const rows = await deps.snapshot();
+    const apps = rows.filter(p => p.executable === mainPath);
+    const tree = descendants(rows, new Set(apps.map(p => p.pid)));
+    if (apps.length && rows.some(p => p.executable === command && tree.has(p.pid)))
+      return `${alreadyRunning ? 'Codex 桌面已在运行，未重复启动' : 'Codex 桌面已启动'}，已确认桌面及其 App Server 进程存在。微信桥接继续运行。Remote 是否可连接仍取决于既有配对、登录和网络；本操作未修改远程访问设置，也未核验定时任务执行。`;
+    await deps.sleep(500);
+  }
+  throw new Error('桌面启动等待超时：尚未确认桌面及其 App Server 就绪。请检查电脑上的启动或登录窗口；未重复启动实例。');
+}

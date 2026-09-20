@@ -48,7 +48,7 @@ export class AcpLanguageService implements LanguageService {
       acp.ndJsonStream(Writable.toWeb(child.stdin), Readable.toWeb(child.stdout) as ReadableStream<Uint8Array>));
     this.connection = connection;
     await connection.initialize({ protocolVersion: acp.PROTOCOL_VERSION,
-      clientInfo: { name: "workhub-awei", version: "0.12.1" },
+      clientInfo: { name: "workhub-awei", version: "0.13.0" },
       clientCapabilities: { fs: { readTextFile: false, writeTextFile: false }, terminal: false } });
     const session = await connection.newSession({ cwd: this.config.cwd, mcpServers: [] });
     this.sessionId = session.sessionId;

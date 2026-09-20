@@ -1,3 +1,4 @@
+import { userError } from "./errors.js";
 /**
  * WeChatAcpBridge — the main orchestrator.
  *
@@ -10,7 +11,7 @@ import { aweiIngress } from "./awei/ingress.js";
 import { AweiController } from "./awei/controller.js";
 import { AcpLanguageService } from "./awei/model.js";
 import { messageToCodexInput, deliverAttachments } from "./codex/attachments.js";
-import { quitCodexDesktop } from "./codex/desktop.js";
+import { quitCodexDesktop, startCodexDesktop } from "./codex/desktop.js";
 import { CodexRouter } from "./codex/router.js";
 import type * as acp from "@agentclientprotocol/sdk";
 import crypto from "node:crypto";
@@ -433,16 +434,19 @@ export class WeChatAcpBridge {
           return;
         }
         if (command && /^\/acp\s+codex(?:\s|$)/i.test(text!.trim())) {
-          if (!/^\/acp\s+codex\s+quit\s*$/i.test(text!.trim())) {
-            await this.sendReply(userId, contextToken, "用法：/acp codex quit（正常退出桌面 App，可能中断桌面正在执行的任务）。");
+          const desktopAction = text!.trim().match(/^\/acp\s+codex\s+(quit|start|open|restore)\s*$/i)?.[1].toLowerCase();
+          if (!desktopAction) {
+            await this.sendReply(userId, contextToken, "用法：/acp codex start 启动桌面；/acp codex restore 先释放桥接会话再恢复桌面；/acp codex quit 正常退出桌面（可能中断桌面任务）。");
             return;
           }
-          await this.sendReply(userId, contextToken, "正在请求 Codex 桌面 App 正常退出，并检查其服务是否停止；桌面正在执行的任务可能中断。微信桥接会继续运行。");
+          await this.sendReply(userId, contextToken, desktopAction === "quit"
+            ? "正在请求 Codex 桌面 App 正常退出，并检查其服务是否停止；桌面正在执行的任务可能中断。微信桥接会继续运行。"
+            : desktopAction === "restore" ? "正在交还会话并恢复桌面；有执行中任务、审批或传输时会拒绝交接。" : "正在启动 Codex 桌面并检查进程；不会重复打开实例。");
           try {
-            const result = await this.quitDesktop();
+            const result = desktopAction === "quit" ? await this.quitDesktop() : desktopAction === "restore" ? await this.restoreDesktop() : await this.startDesktop();
             await this.sendReply(userId, contextToken, result);
           } catch (e) {
-            await this.sendReply(userId, contextToken, `桌面退出未完成：${e instanceof Error ? e.message : String(e)}`);
+            await this.sendReply(userId, contextToken, userError(e, "unknown", desktopAction === "quit" ? "桌面退出" : "桌面启动/交接"));
           }
           return;
         }
@@ -515,6 +519,8 @@ export class WeChatAcpBridge {
       this.awei = new AweiController(model, router, {
         release: () => this.releaseBridgeSessions(),
         quit: () => this.quitDesktop(),
+        start: () => this.startDesktop(),
+        restore: () => this.restoreDesktop(),
         off: async () => {
           let result = "";
           await router.handle(userId, "/acp off", async text => { result = text; });
@@ -525,19 +531,29 @@ export class WeChatAcpBridge {
     await this.awei.handle(userId, text, reply);
   }
 
-  private async releaseBridgeSessions(): Promise<string> {
-    await this.awei?.close();
+  private async releaseBridgeSessions(keepAssistant = false): Promise<string> {
+    if (!keepAssistant) await this.awei?.close();
     if (this.messageBuffers.size || this.bufferFlushing.size)
       throw new Error("还有尚未发送的缓冲消息，请先发送或处理完再释放。");
     this.sessionManager?.assertReleasable();
     await this.codexRouter!.assertReleasable();
     const acpCount = await this.sessionManager?.releaseAll() ?? 0;
     const routedCount = await this.codexRouter!.releaseAll();
-    return `已释放桥接持有的全部会话：ACP ${acpCount} 个，目标路由 ${routedCount} 个。历史记录已保留。桌面端现在可重新打开；下次微信消息会重新建立连接。`;
+    return `已释放${keepAssistant ? "桥接持有的业务会话（阿维服务保持运行）" : "桥接持有的全部会话"}：ACP ${acpCount} 个，目标路由 ${routedCount} 个。历史记录已保留。桌面端现在可重新打开；下次微信消息会重新建立连接。`;
   }
 
   protected async quitDesktop(): Promise<string> {
     return quitCodexDesktop(this.config.codexServer?.command ?? "");
+  }
+
+  protected async startDesktop(): Promise<string> {
+    return startCodexDesktop(this.config.codexServer?.command ?? "");
+  }
+
+  protected async restoreDesktop(): Promise<string> {
+    const released = await this.releaseBridgeSessions(true);
+    try { return released + "\n" + await this.startDesktop(); }
+    catch (cause) { return released + "\n" + userError(cause, "unknown", "桌面启动") + "\n桥接会话已经释放。检查桌面状态后，可单独使用 /acp codex start。"; }
   }
 
   private async trackMessageHandling(

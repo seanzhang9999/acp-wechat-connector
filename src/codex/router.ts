@@ -25,6 +25,8 @@ const help = [
   "/acp result — 查看本次发送的状态/结果",
   "/acp new — 在当前项目创建并选中新会话",
   "/acp off — 返回原来的 ACP 聊天（不释放）",
+  "/acp codex start — 启动 Codex 桌面，供 Remote 使用",
+  "/acp codex restore — 释放桥接会话后恢复桌面",
   "/acp codex quit — 正常退出 Codex 桌面 App（可能中断桌面任务）",
   "/acp release-all — 释放桥接持有的全部会话（忙碌时拒绝）",
   "选中目标后，文本、图片和文件会直接发给该目标；最终回复中的本地文件链接会作为附件发送。编号只对应你上次看到的列表。",
