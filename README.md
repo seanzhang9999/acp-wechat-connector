@@ -4,6 +4,8 @@ ACP WeChat Connector · v0.13.2
 
 团队成员从这里开始：[安装、更新与完整体验指南](docs/team-guide.md)。
 
+替代微信接入方案：[阿维 × WorkBuddy 连接器设计（尚未实现）](docs/workbuddy-integration-proposal.md)。
+
 通过微信远程继续 Mac 上的 Codex 会话，回到电脑后再交回 Codex 桌面 App。
 
 这个项目面向个人使用：不需要引入 VS Code，也不要求微信和桌面同时控制一个会话。出门后在微信退出 Codex 桌面，选择原会话继续；回到本地前释放桥接持有的会话，再打开桌面继续工作。会话沿用同一份本地历史。
