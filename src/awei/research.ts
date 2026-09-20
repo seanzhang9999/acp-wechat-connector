@@ -15,7 +15,7 @@ export class ResearchSession {
     return { candidates, hasMore: this.router.assistantContext(this.user).hasMore,
       scope: '未归档会话正文检索；命中摘要不是完整对话。可扩展关键词，未找到不等于不存在。' };
   }
-  private thread(ref?: string) {
+  private thread(ref?: string): ThreadSummary {
     const c = this.router.assistantContext(this.user);
     const candidate = ref ? c.candidates.find(t => t.id === ref || String(t.number) === ref) : c.current;
     const t = candidate ?? (ref ? this.threads.get(ref) : undefined);
