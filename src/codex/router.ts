@@ -1,3 +1,5 @@
+import { existsSync, readFileSync, mkdirSync, writeFileSync, renameSync } from "node:fs";
+import path from "node:path";
 import type { CodexInput } from "./attachments.js";
 import {
   CodexRpc,
@@ -31,6 +33,8 @@ interface UserState {
   selected?: ThreadSummary;
   cursor?: string | null;
   query?: string;
+  contentSearch?: boolean;
+  seenIds?: Set<string>;
   result?: string;
   listAt?: number;
   history?: { threadId: string; cursor?: string | null; text: string };
@@ -48,7 +52,38 @@ interface Flight {
 }
 export class CodexRouter {
   private assistantSessionIds = new Set<string>();
-  hideAssistantSession(id: string): void { this.assistantSessionIds.add(id); }
+  private hiddenFile?: string;
+  private internalCwd?: string;
+  configureInternalSessions(storageDir: string): void {
+    this.internalCwd = path.resolve(storageDir, "awei-workspace");
+    this.hiddenFile = path.join(storageDir, "internal-session-ids.json");
+    if (existsSync(this.hiddenFile)) {
+      const ids: unknown = JSON.parse(readFileSync(this.hiddenFile, "utf8"));
+      if (!Array.isArray(ids) || !ids.every(id => typeof id === "string")) throw new Error("内部会话记录格式错误");
+      for (const id of ids) this.assistantSessionIds.add(id);
+    }
+  }
+  hideAssistantSession(id: string): void {
+    if (this.assistantSessionIds.has(id)) return;
+    this.assistantSessionIds.add(id);
+    if (this.hiddenFile) {
+      mkdirSync(path.dirname(this.hiddenFile), { recursive: true, mode: 0o700 });
+      const temp = this.hiddenFile + ".tmp";
+      writeFileSync(temp, JSON.stringify([...this.assistantSessionIds]), { mode: 0o600 });
+      renameSync(temp, this.hiddenFile);
+    }
+  }
+  private visiblePage(s: UserState, rows: ThreadSummary[], more: boolean): ThreadSummary[] {
+    if (!more) s.seenIds = new Set();
+    const seen = s.seenIds ??= new Set();
+    return rows.filter(t => {
+      // Dedicated workspace identifies older internal sessions after a restart.
+      if (this.internalCwd && t.cwd && path.resolve(t.cwd) === this.internalCwd) this.hideAssistantSession(t.id);
+      if (this.assistantSessionIds.has(t.id) || seen.has(t.id)) return false;
+      seen.add(t.id);
+      return true;
+    });
+  }
   private users = new Map<string, UserState>();
   private fresh = new Set<string>();
   private attached = new Set<string>();
@@ -111,28 +146,33 @@ export class CodexRouter {
     return {
       now: new Date().toISOString(), timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
       current: s.selected ? { id: s.selected.id, name: title(s.selected) } : null,
-      candidates: valid ? s.list.map((t, i) => ({ number: i + 1, id: t.id, name: title(t), createdAt: t.createdAt, updatedAt: t.updatedAt })) : [],
+      candidates: valid ? s.list.map((t, i) => ({ number: i + 1, id: t.id, name: title(t), createdAt: t.createdAt, updatedAt: t.updatedAt, snippet: t.snippet })) : [],
       candidatesExpired: !!s.list.length && !valid,
       hasMore: valid && !!s.cursor,
       history: s.history?.text,
     };
   }
-  async assistantSearch(userId: string, query = "", more = false): Promise<string> {
+  async assistantSearch(userId: string, query = "", more = false, content = false): Promise<string> {
     const s = this.state(userId);
     if (more && (!s.cursor || !s.listAt || Date.now() - s.listAt >= 10 * 60_000))
       throw new Error("候选列表没有下一页或已过期，请重新查找。");
     const term = more ? s.query : query;
-    const page = await this.rpc.request<{ data: ThreadSummary[]; nextCursor?: string | null }>("thread/list", {
-      limit: 50, sourceKinds: [], ...(term ? { searchTerm: term } : {}), ...(more ? { cursor: s.cursor } : {}),
-    });
-    s.list = page.data.filter(t => !this.assistantSessionIds.has(t.id));
+    const useContent = more ? s.contentSearch : content;
+    if (useContent && !term?.trim()) throw new Error("正文搜索需要关键词。");
+    const params = { limit: useContent ? 12 : 50, sourceKinds: [], ...(term ? { searchTerm: term } : {}), ...(more ? { cursor: s.cursor } : {}) };
+    const page = useContent
+      ? await this.rpc.request<{ data: { thread: ThreadSummary; snippet: string }[]; nextCursor?: string | null }>("thread/search", params)
+          .then(p => ({ ...p, data: p.data.map(hit => ({ ...hit.thread, snippet: hit.snippet.slice(0, 1800) })) }))
+      : await this.rpc.request<{ data: ThreadSummary[]; nextCursor?: string | null }>("thread/list", params);
+    s.contentSearch = useContent;
+    s.list = this.visiblePage(s, page.data, more);
     s.listAt = Date.now(); s.cursor = page.nextCursor; s.query = term;
     return this.assistantCandidates(userId);
   }
   assistantCandidates(userId: string): string {
     const c = this.assistantContext(userId);
-    return c.candidates.length ? c.candidates.map(t => `${t.number}. ${t.name}`).join("\n") +
-      "\n说“阿维，切到第几个”即可选择。" + (c.hasMore ? " 还可以说“阿维，下一页会话”。" : "") : "没有找到匹配会话。";
+    return c.candidates.length ? c.candidates.map(t => `${t.number}. ${t.name}${t.snippet ? "\n命中：" + t.snippet.replace(/\s+/g, " ").slice(0, 180) : ""}`).join("\n") +
+      "\n说“阿维，切到第几个”即可选择。" + (c.hasMore ? " 还可以说“阿维，下一页会话”。" : "") : (c.hasMore ? "本页没有新的可见会话，可以说“阿维，下一页会话”。" : "没有找到匹配会话。");
   }
   assistantSelect(userId: string, ref: string): string {
     const s = this.state(userId);
@@ -171,6 +211,15 @@ export class CodexRouter {
       (page.nextCursor ? "\n可说“阿维，再往前看”。" : "\n已到可读取历史的起点。");
     s.history = { threadId: t.id, cursor: page.nextCursor, text };
     return text;
+  }
+  researchOccurrences(threadId: string, searchTerm: string, cursor?: string) {
+    return this.rpc.request<{ data: { turnId: string; snippet: string; turnCursor: string }[]; nextCursor?: string | null }>(
+      "thread/searchOccurrences", { threadId, searchTerm, limit: 5, ...(cursor ? { cursor } : {}) });
+  }
+  researchTurns(threadId: string, cursor: string | undefined, count: number) {
+    return this.rpc.request<{ data: Turn[]; nextCursor?: string | null }>("thread/turns/list", {
+      threadId, limit: Math.min(6, Math.max(1, count)), sortDirection: "desc", itemsView: "full", ...(cursor ? { cursor } : {}),
+    });
   }
   selected(userId: string): boolean {
     return !!this.users.get(userId)?.selected;
@@ -221,6 +270,10 @@ export class CodexRouter {
         case "more": {
           if (cmd === "more" && !s.cursor)
             throw new Error("没有下一页。使用 /acp list 刷新。");
+          if (cmd === "more" && s.contentSearch) {
+            await reply(await this.assistantSearch(userId, "", true));
+            break;
+          }
           const r = await this.rpc.request<{
             data: ThreadSummary[];
             nextCursor?: string | null;
@@ -236,10 +289,10 @@ export class CodexRouter {
                 ? { searchTerm: args }
                 : {}),
           });
-          s.list = r.data.filter(t => !this.assistantSessionIds.has(t.id));
+          s.list = this.visiblePage(s, r.data, cmd === "more");
           s.listAt = Date.now();
           s.cursor = r.nextCursor;
-          if (cmd === "list") s.query = args;
+          if (cmd === "list") { s.query = args; s.contentSearch = false; }
           await reply(
             s.list
               .map(

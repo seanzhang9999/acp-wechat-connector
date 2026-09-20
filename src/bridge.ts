@@ -133,7 +133,10 @@ export class WeChatAcpBridge {
 
   constructor(config: WeChatAcpConfig, log?: (msg: string) => void) {
     this.config = config;
-    if (config.codexServer) this.codexRouter = CodexRouter.create(config.codexServer, config.agent.cwd);
+    if (config.codexServer) {
+      this.codexRouter = CodexRouter.create(config.codexServer, config.agent.cwd);
+      this.codexRouter.configureInternalSessions(config.storage.dir);
+    }
     this.log = log ?? ((msg: string) => console.log(`[wechat-acp] ${msg}`));
     this.pendingText = new PendingTextRegistry({
       ttlMs: PENDING_TEXT_TTL_MS,

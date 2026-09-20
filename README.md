@@ -143,3 +143,9 @@ node scripts/awei-smoke.mjs config.local.json
 ## 来源与许可
 
 基于 [WeChat ACP](https://github.com/formulahendry/wechat-acp)，上游基线提交 `4b787a5`。保留 [MIT LICENSE](LICENSE) 及上游贡献历史。WeChat、Codex、ACP、OpenClaw 等名称归各自项目或权利人；本项目是个人扩展，非官方产品。
+
+### v0.12：按正文找资料并回答
+
+在微信说“阿维，之前埃及酒店最后怎么决定的？”：助手可以按正文查找、定位命中、连续阅读多个会话，并附上本次读取的来源。读取不会切换默认会话；正文搜索仅覆盖未归档会话的可见文本。会话列表按 ID 去重，内部会话隐藏记录跨重启保留。
+
+说“阿维，打开网页版演示”可打开 [公开合成示例](https://seanzhang9999.github.io/acp-wechat-connector/)。这验证链接阅读体验；真实内容发布、验证码保护与飞书搜索尚未接入。详见 [助手设计](docs/wechat-assistant-design.md)。

@@ -12,6 +12,7 @@ export interface ThreadSummary {
   id: string;
   name?: string | null;
   preview?: string;
+  snippet?: string;
   cwd?: string;
   createdAt?: number;
   updatedAt?: number;
