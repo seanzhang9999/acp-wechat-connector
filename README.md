@@ -1,6 +1,6 @@
 # 阿维 · WorkHub 助手
 
-ACP WeChat Connector · v0.14.0
+ACP WeChat Connector · v0.14.1
 
 团队成员从这里开始：[安装、更新与完整体验指南](docs/team-guide.md)。
 

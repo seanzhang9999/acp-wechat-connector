@@ -18,6 +18,13 @@ test("real stdio connector accepts dedicated help, returns image, and never laun
   for(let i=0;i<50&&out.state==="running";i++){await new Promise(r=>setTimeout(r,20));out=parse(await client.callTool({name:"awei_poll",arguments:{receiptId:"hello"}}));}
   assert.equal(out.state,"done");assert.match(out.events[0].text,/我是阿维/);
   assert.ok(out.events.some((e:any)=>e.type==="image"&&existsSync(e.path)));
+  const native = await client.callTool({name:"awei_poll",arguments:{receiptId:"hello"}});
+  assert.ok((native.content as any[]).some(c=>c.type==="image"&&c.mimeType==="image/jpeg"&&Buffer.from(c.data,"base64").subarray(0,3).toString("hex")==="ffd8ff"));
+  await client.callTool({name:"awei_message",arguments:{receiptId:"ack",text:"收到啦"}});
+  let ack:any;
+  for(let i=0;i<50;i++){await new Promise(r=>setTimeout(r,20));ack=parse(await client.callTool({name:"awei_poll",arguments:{receiptId:"ack"}}));if(ack.state==="done")break;}
+  assert.match(ack.events[0].text,/有需要随时/);
+  assert.equal(ack.events.length,1);
   const same=parse(await client.callTool({name:"awei_message",arguments:{receiptId:"hello",text:"阿维，你能做什么"}}));assert.equal(same.state,"done");
  }finally{await client.close();await new Promise(r=>setTimeout(r,100));rmSync(dir,{recursive:true,force:true});}
 });

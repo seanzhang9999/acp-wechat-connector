@@ -38,3 +38,8 @@ test('completed task delivery failure reports completed status without starting 
  await new Promise(resolve=>setImmediate(resolve));
  assert.match(out.at(-1)!,/Agent 已完成本轮/);assert.match(out.at(-1)!,/避免重发导致重复执行/);assert.equal(starts,1);await r.close();
 });
+test('model schema errors are distinguishable from service internal errors',()=>{
+ const logs:string[]=[];
+ const out=userError(new Error('MODEL_OUTPUT: sources:too_small'),'read_only','阿维请求',s=>logs.push(s));
+ assert.match(out,/MODEL_OUTPUT-/);assert.match(out,/回复格式/);assert.match(logs[0],/sources:too_small/);
+});

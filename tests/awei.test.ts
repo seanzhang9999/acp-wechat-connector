@@ -150,3 +150,15 @@ test("untranscribed voice is explained and never blindly forwarded", async () =>
    assert.deepEqual(g.events, []);
    assert.match(g.output.join("\n"), /有效待确认/);
  });
+test("acknowledgments do not invoke model, tools or actions", async () => {
+ for(const text of ["收到啦","收到啦！","谢谢你","好的。"]){
+  const f=setup([]);await f.ctl.handle("u",text,f.reply);
+  assert.deepEqual(f.prompts,[]);assert.deepEqual(f.rpc.calls,[]);assert.deepEqual(f.events,[]);
+  assert.match(f.output[0],/有需要随时/);
+ }
+});
+test("social chat has its own action while research answers still require sources", async () => {
+ const f=setup([{action:"chat",text:"你好，有什么可以帮你的？"}]);
+ await f.ctl.handle("u","你好呀",f.reply);assert.match(f.output.at(-1)!,/你好/);
+ assert.throws(()=>parsePlan('{"action":"answer","text":"好的，有需要随时叫阿维。","sources":[]}'),/MODEL_OUTPUT.*sources/);
+});

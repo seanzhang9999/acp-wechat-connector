@@ -22,7 +22,10 @@ export function userError(error: unknown, state: ExecutionState, operation: stri
   const raw = details(error), ref = randomUUID().slice(0, 8);
   let code = 'INTERNAL', reason = '服务返回了未识别的错误，具体原因需要查看日志。';
   let action = '请提供下方错误编号，便于排查。';
-  if (/active writer|另一个 Codex 服务占用/i.test(raw)) {
+  if (/MODEL_OUTPUT/.test(raw)) {
+    code = 'MODEL_OUTPUT'; reason = '阿维返回的回复格式不符合协议，本次回复未被执行。';
+    action = '请提供错误编号以核对格式校验日志；这不等于 Codex 服务不可用。';
+  } else if (/active writer|另一个 Codex 服务占用/i.test(raw)) {
     code = 'SESSION_BUSY'; reason = '会话由另一个 Codex 服务持有，当前连接不能接管。';
     action = '若是桌面占用：继续在电脑使用，或在微信发送 /acp codex quit，等待退出成功后再交接。';
   } else if (/unauthori[sz]ed|authentication|login|登录|认证|\b401\b/i.test(raw)) {
