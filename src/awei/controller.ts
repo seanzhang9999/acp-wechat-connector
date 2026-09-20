@@ -57,6 +57,9 @@ export class AweiController {
   async handle(user: string, request: string, reply: (text: string) => Promise<void>): Promise<void> {
     let executionState: ExecutionState = "read_only";
     try {
+      // Speech adds terminal punctuation. Normalize only exact control phrases.
+      const control = request.trim().replace(/[。.!！?？]+$/u, "").trim();
+      if (/^(取消|算了|确认(?:退出|释放|恢复))$/.test(control)) request = control;
       const pending = this.pending.get(user);
       if (/^(取消|算了)$/.test(request)) { this.pending.delete(user); await reply("阿维：已取消待确认操作。"); return; }
       if (/^确认(退出|释放|恢复)$/.test(request)) {

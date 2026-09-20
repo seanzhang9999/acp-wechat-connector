@@ -10,8 +10,9 @@ export function aweiIngress(msg: WeixinMessage): Ingress {
   if (text === undefined) return { kind: "unchanged" };
   const escaped = text.trim().match(/^转给当前会话[：:,，]\s*([\s\S]*)$/);
   if (escaped) return { kind: "business", text: escaped[1], voice };
-  // Spoken transcripts often omit punctuation after a name; only at the start.
-  const match = text.trim().match(voice ? /^阿维[：:,，、\s]*([\s\S]*)$/ : /^阿维(?:[：:,，\s]+([\s\S]*)|$)/);
+  // Explicit start-only homophones tolerate speech transcription and omitted punctuation.
+  // Keep the original command body; never fuzzy-match arbitrary names or message contents.
+  const match = text.trim().match(/^[阿啊AaＡａ]\s*[维維唯惟威微薇伟偉韦韋玮瑋炜煒为為围圍卫衛魏蔚][：:,，、。.!！?？\s]*([\s\S]*)$/);
   if (match) return { kind: "assistant", text: (match[1] ?? "").trim(), voice };
   return voice ? { kind: "business", text, voice } : { kind: "unchanged" };
 }

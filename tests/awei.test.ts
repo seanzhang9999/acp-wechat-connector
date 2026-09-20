@@ -12,7 +12,7 @@ test("Awei wake is start-only; speech transcript and business escape have determ
   assert.deepEqual(aweiIngress(message("阿维，找会话")), { kind: "assistant", text: "找会话", voice: false });
   assert.deepEqual(aweiIngress(message("阿维帮我找会话", true)), { kind: "assistant", text: "帮我找会话", voice: true });
   assert.equal(aweiIngress(message("正文提到阿维，找会话")).kind, "unchanged");
-  assert.equal(aweiIngress(message("阿威，切换")).kind, "unchanged");
+  assert.equal(aweiIngress(message("阿威，切换")).kind, "assistant");
   assert.deepEqual(aweiIngress(message("转给当前会话：阿维，切换")), { kind: "business", text: "阿维，切换", voice: false });
   assert.deepEqual(aweiIngress(message("修改行程", true)), { kind: "business", text: "修改行程", voice: true });
   assert.equal(aweiIngress(message("", true)).kind, "untranscribed");
@@ -127,3 +127,26 @@ test("untranscribed voice is explained and never blindly forwarded", async () =>
   await b.handleMessage(message("", true));
   assert.match(out[0], /没有附带转写/);
 });
+
+ test("speech homophones route only explicit wake prefixes and preserve escape", () => {
+  for (const voice of [false, true]) {
+    for (const name of ["阿伟", "阿唯", "阿威", "啊维", "A维", "a 微", "Ａ薇", "阿維", "阿魏"]) {
+      assert.deepEqual(aweiIngress(message(name + "关闭电脑上的 codex。", voice)), { kind: "assistant", text: "关闭电脑上的 codex。", voice });
+      assert.deepEqual(aweiIngress(message(name + "，确认退出。", voice)), { kind: "assistant", text: "确认退出。", voice });
+    }
+    for (const text of ["正文提到阿伟", "潘伟确认退出。", "维修电脑", "API 调用", "埃及旅行", "请问阿维怎么用"]) {
+      assert.equal(aweiIngress(message(text, voice)).kind, voice ? "business" : "unchanged");
+    }
+    assert.deepEqual(aweiIngress(message("转给当前会话：阿伟，关闭电脑", voice)), { kind: "business", text: "阿伟，关闭电脑", voice });
+  }
+ });
+ test("spoken confirmation punctuation preserves matching pending authorization", async () => {
+   const f = setup([{ action: "quit" }]);
+   await f.ctl.handle("u", "关闭桌面", f.reply);
+   await f.ctl.handle("u", "确认退出。", f.reply);
+   assert.deepEqual(f.events, ["close-model", "quit"]);
+   const g = setup([]);
+   await g.ctl.handle("u", "确认退出。", g.reply);
+   assert.deepEqual(g.events, []);
+   assert.match(g.output.join("\n"), /有效待确认/);
+ });
