@@ -165,9 +165,10 @@ test("session creation failures are surfaced to the WeChat user", async () => {
     manager.enqueue("user-1", { prompt: [], contextToken: "context-1" }),
     /persisted session could not be loaded/,
   );
-  assert.deepEqual(replies, [
-    "⚠️ Agent session error: persisted session could not be loaded",
-  ]);
+  assert.equal(replies.length, 1);
+  assert.match(replies[0], /本次请求未送入 agent 执行/);
+  assert.match(replies[0], /错误编号：INTERNAL-/);
+  assert.doesNotMatch(replies[0], /persisted session could not be loaded/);
 });
 
 test("runtime bridge settings are scoped to a session and applied at the next turn", async () => {

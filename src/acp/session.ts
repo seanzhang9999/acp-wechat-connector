@@ -1,3 +1,4 @@
+import { userError, type ExecutionState } from "../errors.js";
 /**
  * Per-user ACP session manager.
  *
@@ -347,7 +348,7 @@ export class SessionManager {
         await this.opts.onReply(
           userId,
           message.contextToken,
-          `⚠️ Agent session error: ${errorMessage(err)}`,
+          userError(err, "not_sent", "建立 Agent 会话", this.opts.log),
           message.replyGeneration,
         );
       } catch (replyErr) {
@@ -376,18 +377,6 @@ export class SessionManager {
       });
     }
 
-    function errorMessage(err: unknown): string {
-      if (err instanceof Error) return err.message;
-      if (
-        typeof err === "object" &&
-        err !== null &&
-        "message" in err &&
-        typeof err.message === "string"
-      ) {
-        return err.message;
-      }
-      return String(err);
-    }
   }
 
   async enqueueAndWait(
@@ -1086,6 +1075,7 @@ export class SessionManager {
         const pending = session.queue.shift()!;
         session.activeMessage = pending;
         let completionError: unknown;
+        let executionState: ExecutionState = "not_sent";
         const promptStartedAt = Date.now();
         const isSessionCurrent = () => this.isCurrentSession(session);
 
@@ -1200,6 +1190,7 @@ export class SessionManager {
           // Send ACP prompt
           this.opts.log(`[${session.userId}] Sending prompt to agent...`);
           session.promptDispatched = true;
+          executionState = "unknown";
           const result = await this.awaitAgentOperation(
             session,
             session.agentInfo.connection.prompt({
@@ -1212,6 +1203,7 @@ export class SessionManager {
             completionError = session.closedError ?? new SessionResetError();
             continue;
           }
+          executionState = result.stopReason === "end_turn" ? "completed" : "unknown";
           await this.persistSessionId(session);
 
           // Collect accumulated text
@@ -1332,7 +1324,7 @@ export class SessionManager {
             await this.opts.onReply(
               session.userId,
               pending.contextToken,
-              `⚠️ Agent error: ${String(err)}`,
+              userError(err, executionState, "Agent 请求", this.opts.log),
               pending.replyGeneration,
               isSessionCurrent,
             );

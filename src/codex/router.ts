@@ -1,3 +1,4 @@
+import { userError, OperationFailure, type ExecutionState } from "../errors.js";
 import { existsSync, readFileSync, mkdirSync, writeFileSync, renameSync } from "node:fs";
 import path from "node:path";
 import type { CodexInput } from "./attachments.js";
@@ -138,7 +139,7 @@ export class CodexRouter {
     try {
       const s = this.state(userId);
       await this.send(s, await this.target(s), input, reply);
-    } catch (e) { await reply(`发送失败：${e instanceof Error ? e.message : String(e)}`); }
+    } catch (e) { await reply(userError(e, "not_sent", "发送消息")); }
   }
   assistantContext(userId: string) {
     const s = this.state(userId);
@@ -254,6 +255,7 @@ export class CodexRouter {
   }
   async handle(userId: string, text: string, reply: Reply): Promise<void> {
     const s = this.state(userId);
+    let operationState: ExecutionState = "not_sent";
     const match = text.trim().match(/^\/acp(?:\s+(\S+))?(?:\s+([\s\S]*))?$/);
     try {
       if (!match) {
@@ -307,6 +309,7 @@ export class CodexRouter {
         case "use": {
           if (!args) throw new Error("用法：/acp use 编号或ID");
           const t = await this.target(s, args);
+          operationState = "unknown";
           s.selected = t;
           s.history = undefined;
           await reply(`已选择：${title(t)}\n${t.id}\n选择不会恢复或启动任务。`);
@@ -342,6 +345,7 @@ export class CodexRouter {
           await reply(s.result ?? "尚无发送记录。");
           break;
         case "off":
+          operationState = "unknown";
           s.selected = undefined;
           s.history = undefined;
           await reply(
@@ -350,6 +354,7 @@ export class CodexRouter {
           break;
         case "new": {
           if (args) throw new Error("用法：/acp new（当前项目）");
+          operationState = "unknown";
           const r = await this.rpc.request<{ thread: Thread }>("thread/start", {
             cwd: this.cwd,
             historyMode: "legacy",
@@ -367,12 +372,7 @@ export class CodexRouter {
           );
       }
     } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      await reply(
-        msg.includes("active writer")
-          ? "目标会话由另一个 Codex 服务持有，当前连接不能接管。未发送消息、未新建替代会话；请连接原服务或选择其他会话。"
-          : `操作失败：${msg}`,
-      );
+      await reply(userError(e, operationState, "会话操作"));
     }
   }
   private async send(
@@ -398,12 +398,13 @@ export class CodexRouter {
         () =>
           this.finish(
             t.id,
-            "等待超时；任务可能仍在运行，不会自动重发。请 /acp recent 检查。",
+            userError(new Error("timeout"), "unknown", "等待任务结果"), undefined, "unknown",
           ),
         this.timeoutMs,
       ),
     };
     this.flights.set(t.id, f);
+    let executionState: ExecutionState = "not_sent";
     try {
       if (!this.attached.has(t.id)) {
         const r = await this.rpc.request<{ thread: Thread }>("thread/resume", {
@@ -424,6 +425,7 @@ export class CodexRouter {
         if (state.thread.status?.type === "active")
           throw new Error("目标正在执行其他任务；本条消息未发送，请稍后再试。");
       }
+      executionState = "unknown";
       const result = await this.rpc.request<{ turn: Turn }>("turn/start", {
         threadId: t.id,
         input: [
@@ -431,6 +433,7 @@ export class CodexRouter {
           ...(reply.attachments ? [{ type: "text", text: "[微信桥接附件交付说明] 如用户要求交付文件或图片，请在当前会话工作目录内保存文件，并在最终回复使用 [文件名](<绝对路径>) 或 ![图片](<绝对路径>) 链接，桥接会读取该文件并作为微信附件发送。单文件最多 25 MiB，每轮最多 10 个；源代码引用请带 :行号，以免作为附件发送。" }] : []),
         ],
       });
+      executionState = "started";
       this.fresh.delete(t.id);
       f.turnId = result.turn.id;
       user.result = `【${f.title}】已发送\n任务：${t.id}\n轮次：${f.turnId}`;
@@ -440,13 +443,13 @@ export class CodexRouter {
     } catch (e) {
       clearTimeout(f.timer);
       this.flights.delete(t.id);
-      throw e;
+      throw new OperationFailure(executionState, e);
     }
   }
   private event(method: string, params: any): void {
     if (method === "connection/closed") {
       for (const id of [...this.flights.keys()])
-        this.finish(id, "连接已断开，发送/完成状态可能不确定；不会自动重发。");
+        this.finish(id, userError(new Error("connection closed"), "unknown", "等待任务结果"), undefined, "unknown");
       return;
     }
     if (method === "server/request") {
@@ -490,11 +493,12 @@ export class CodexRouter {
       .join("\n");
     this.finish(
       f.threadId,
-      `轮次 ${turn.id}：${turn.status}\n${text || turn.error?.message || "本轮完成，无最终文本。"}`,
+      `轮次 ${turn.id}：${turn.status}\n${text || "本轮没有最终文本。"}${turn.error || turn.status === "failed" ? "\n" + userError(new Error(turn.error?.message ?? "Internal error"), "failed", "Agent 任务") : ""}`,
       text,
+      turn.status === "completed" ? "completed" : "failed",
     );
   }
-  private finish(id: string, text: string, finalText?: string): void {
+  private finish(id: string, text: string, finalText?: string, deliveryState: ExecutionState = "completed"): void {
     const f = this.flights.get(id);
     if (!f) return;
     clearTimeout(f.timer);
@@ -502,7 +506,11 @@ export class CodexRouter {
     f.user.result = `【${f.title}】\n${text}`;
     const delivery = f.reply(f.user.result).then(async () => {
       if (finalText && f.reply.attachments) await f.reply.attachments(finalText, f.cwd);
-    }).catch(() => {});
+    }).catch(async error => {
+      const notice = userError(error, deliveryState, "回复或附件交付");
+      f.user.result = notice;
+      try { await f.reply(notice); } catch (deliveryError) { userError(deliveryError, deliveryState, "错误通知交付"); }
+    });
     this.delivering.add(delivery);
     void delivery.finally(() => this.delivering.delete(delivery));
   }

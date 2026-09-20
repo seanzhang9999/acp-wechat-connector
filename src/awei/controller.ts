@@ -1,3 +1,4 @@
+import { userError, type ExecutionState } from "../errors.js";
 import { ResearchSession } from "./research.js";
 import { z } from "zod";
 import type { CodexRouter } from "../codex/router.js";
@@ -50,6 +51,7 @@ export class AweiController {
   constructor(private model: LanguageService, private router: CodexRouter, private actions: AweiActions) {}
   async close(): Promise<void> { this.pending.clear(); await this.model.close(); }
   async handle(user: string, request: string, reply: (text: string) => Promise<void>): Promise<void> {
+    let executionState: ExecutionState = "read_only";
     try {
       const pending = this.pending.get(user);
       if (/^(取消|算了)$/.test(request)) { this.pending.delete(user); await reply("阿维：已取消待确认操作。"); return; }
@@ -61,6 +63,7 @@ export class AweiController {
         this.pending.delete(user);
         // Finish/close our own ACP inference before checking the business locks.
         await this.model.close();
+        executionState = "unknown";
         await reply("阿维：" + await this.actions[action]()); return;
       }
       this.pending.delete(user);
@@ -71,6 +74,7 @@ export class AweiController {
       let searched = false;
       const research = new ResearchSession(this.router, user);
       const observations: unknown[] = [];
+      const reportedErrors = new Set<string>();
       const started = Date.now();
       for (let step = 0; step < 11; step++) {
         const context = this.router.assistantContext(user);
@@ -87,7 +91,10 @@ export class AweiController {
                 : await research.read(plan.ref, plan.anchor, plan.earlier, plan.count);
               observations.push({ action: plan, result });
             } catch (error) {
-              observations.push({ action: plan, error: error instanceof Error ? error.message.slice(0, 400) : String(error) });
+              const key = error instanceof Error ? error.message : String(error);
+              const notice = userError(error, "read_only", "阿维查阅步骤");
+              observations.push({ action: plan, error: key.slice(0, 400), notice });
+              if (!reportedErrors.has(key)) { reportedErrors.add(key); await reply(notice); }
             }
             continue;
           }
@@ -100,7 +107,7 @@ export class AweiController {
           case "search":
             await this.router.assistantSearch(user, plan.query, plan.more); searched = true; continue;
           case "show": await reply("阿维：\n" + this.router.assistantCandidates(user)); return;
-          case "select": await reply("阿维：" + this.router.assistantSelect(user, plan.ref)); return;
+          case "select": executionState = "unknown"; await reply("阿维：" + this.router.assistantSelect(user, plan.ref)); return;
           case "history": await reply("阿维：\n" + await this.router.assistantHistory(user, plan.ref, plan.count, plan.earlier)); return;
           case "current": await reply("阿维：" + (context.current ? `当前是「${context.current.name}」。` : "当前使用原 ACP 聊天，未选择目标会话。")); return;
           case "summarize": {
@@ -112,13 +119,13 @@ export class AweiController {
           case "release": case "quit":
             this.pending.set(user, { action: plan.action, expires: Date.now() + 120_000 });
             await reply(plan.action === "quit" ? "阿维：将正常退出整个 Codex 桌面，可能中断桌面任务。两分钟内回复“阿维，确认退出”，或“阿维，取消”。" : "阿维：准备释放微信桥接持有的全部会话，保留历史。两分钟内回复“阿维，确认释放”，或“阿维，取消”。"); return;
-          case "off": await reply("阿维：" + await this.actions.off()); return;
+          case "off": executionState = "unknown"; await reply("阿维：" + await this.actions.off()); return;
           case "clarify": await reply("阿维想确认：" + plan.question); return;
         }
       }
       await reply("阿维：本次查阅已达到上限，尚未形成可核对的完整答案。可以缩小问题或指定会话后继续；没有切换或改动会话。");
     } catch (e) {
-      await reply(`阿维未完成这次操作：${e instanceof Error ? e.message.slice(0, 500) : String(e)}\n原 /acp 命令仍可使用；这条请求未转发给业务会话。`);
+      await reply(userError(e, executionState, "阿维请求"));
     }
   }
 }
