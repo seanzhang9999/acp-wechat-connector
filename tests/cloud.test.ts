@@ -50,3 +50,12 @@ test('plain language permission replies are bound to a delivered, live request',
  assert.equal(controller.approvals.resolveReply('owner',true,now),false);
  store.close();
 });
+
+test('Awei highlights executor questions and artifacts without inventing a next step',async()=>{
+ const {resultGuidance}=await import('../src/cloud/result-guidance.js');
+ const complete={taskId:'abcdef012345',status:'succeeded',text:'检查完成。',permissionsDenied:0,artifacts:[]};
+ assert.equal(resultGuidance(complete),'');
+ assert.match(resultGuidance({...complete,text:'请确认要用哪个目录。'}),/\/continue abcdef012345/);
+ assert.match(resultGuidance({...complete,artifacts:['report.md']}),/\/file abcdef012345/);
+ assert.match(resultGuidance({...complete,permissionsDenied:1}),/工具授权/);
+});

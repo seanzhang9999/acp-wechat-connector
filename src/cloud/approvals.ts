@@ -13,7 +13,7 @@ export class Approvals {
   this.store.transaction(()=>{
    this.store.db.prepare('INSERT INTO approvals VALUES(?,?,?,?,?,?)').run(id,task,owner,expires,'pending',title);
    this.store.db.prepare("UPDATE tasks SET status='waiting_approval' WHERE id=?").run(task);
-   this.store.db.prepare("INSERT INTO outbox(id,owner,body) VALUES(?,?,?)").run(`approval-${id}`,owner,`任务 ${task} 请求一次授权：\n${title}\n参数摘要（不可信工具内容）：${input}\n两分钟内可直接回复“同意”或“不同意”。如需指定这条授权：\n/approve ${id}\n或 /deny ${id}\n请仅对你理解并同意的操作批准。`);
+   this.store.db.prepare("INSERT INTO outbox(id,owner,body) VALUES(?,?,?)").run(`approval-${id}`,owner,`【阿维备注】\n您可以回复“同意”或“不同意”，我会把这一次的选择交给 agy。\n\n任务 ${task} 请求一次授权：\n${title}\n参数摘要（不可信工具内容）：${input}\n本条授权两分钟内有效。如需指定这条授权：\n/approve ${id}\n或 /deny ${id}\n请仅对你理解并同意的操作批准。`);
   });
   const allowed=await new Promise<boolean>(resolve=>{
    let settled=false;const finish=(yes:boolean)=>{if(settled)return;settled=true;clearTimeout(timer);signal.removeEventListener('abort',cancel);this.waiting.delete(id);resolve(yes);};

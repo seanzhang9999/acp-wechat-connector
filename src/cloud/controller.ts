@@ -1,3 +1,4 @@
+import {resultGuidance} from './result-guidance.js';
 import {randomBytes,randomUUID} from 'node:crypto';
 import {mkdir,writeFile,readdir} from 'node:fs/promises';
 import path from 'node:path';
@@ -81,7 +82,10 @@ export class CloudController {
     permission:p=>this.approvals.request(task.id,task.owner,p,abort.signal)});
    const status=result.permissionsDenied>0?'failed':result.stopReason==='end_turn'?'succeeded':result.stopReason==='cancelled'?'cancelled':'failed';
    await meter.write({status:result.stopReason==='end_turn'?'passed':'unknown',taskStatus:status,finishedAt:new Date().toISOString(),usage:result.usage});
-   this.store.transaction(()=>{this.store.db.prepare('UPDATE tasks SET status=?,result=? WHERE id=?').run(status,result.text,task.id);this.store.db.prepare('UPDATE turns SET status=?,usage=?,result=? WHERE id=?').run(status,JSON.stringify(result.usage),result.text,turn);this.store.enqueue(task.owner,`[Opus 原文] 任务 ${task.id} · ${status}\n${result.permissionsDenied?`有 ${result.permissionsDenied} 项工具授权被拒绝或过期，任务未标成功。\n`:''}${result.text.slice(0,12000)||'本次无文本结果。'}${result.text.length>12000?'\n[微信展示已截断，完整原文保存于任务，可用 /files 和 /file 获取。]':''}\n\n[用量] ${JSON.stringify(result.usage.tokens)}`);});
+   const entries=await readdir(task.cwd,{withFileTypes:true}).catch(()=>[]);
+   const artifacts=entries.filter(entry=>entry.isFile()&&!/^result-[a-f0-9-]{36}\.txt$/.test(entry.name)).map(entry=>entry.name);
+   const guidance=resultGuidance({taskId:task.id,status,text:result.text,permissionsDenied:result.permissionsDenied,artifacts});
+   this.store.transaction(()=>{this.store.db.prepare('UPDATE tasks SET status=?,result=? WHERE id=?').run(status,result.text,task.id);this.store.db.prepare('UPDATE turns SET status=?,usage=?,result=? WHERE id=?').run(status,JSON.stringify(result.usage),result.text,turn);this.store.enqueue(task.owner,`${guidance?`【阿维备注】\n${guidance}\n\n`: ''}[Opus 原文] 任务 ${task.id} · ${status}\n${result.permissionsDenied?`有 ${result.permissionsDenied} 项工具授权被拒绝或过期，任务未标成功。\n`:''}${result.text.slice(0,12000)||'本次无文本结果。'}${result.text.length>12000?'\n[微信展示已截断，完整原文保存于任务，可用 /files 和 /file 获取。]':''}\n\n[用量] ${JSON.stringify(result.usage.tokens)}`);});
    await writeFile(path.join(task.cwd,`result-${turn}.txt`),result.text,{mode:0o660}).catch(()=>this.store.enqueue(task.owner,'任务原文已保存在数据库，但结果文件写入失败。'));
   }catch(e){const code=safeError(e);const status=submitted?'unknown':code.includes('auth')?'waiting_auth':code.includes('rate_limited')?'rate_limited':'failed';
    await meter.write({status:submitted?'unknown':'failed',finishedAt:new Date().toISOString(),code}).catch(()=>{});
