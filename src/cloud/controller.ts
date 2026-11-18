@@ -64,9 +64,9 @@ export class CloudController {
     onSession:async id=>{this.store.db.prepare('UPDATE tasks SET session=? WHERE id=?').run(id,task.id);},
     onSubmitted:async()=>{await meter.write({status:'prompt_started',promptStarted:true});submitted=true;},
     permission:p=>this.approvals.request(task.id,task.owner,p,abort.signal)});
-   const status=result.stopReason==='end_turn'?'succeeded':result.stopReason==='cancelled'?'cancelled':'failed';
-   await meter.write({status:status==='succeeded'?'passed':'unknown',finishedAt:new Date().toISOString(),usage:result.usage});
-   this.store.transaction(()=>{this.store.db.prepare('UPDATE tasks SET status=?,result=? WHERE id=?').run(status,result.text,task.id);this.store.db.prepare('UPDATE turns SET status=?,usage=?,result=? WHERE id=?').run(status,JSON.stringify(result.usage),result.text,turn);this.store.enqueue(task.owner,`[Opus 原文] 任务 ${task.id} · ${status}\n${result.text.slice(0,12000)||'本次无文本结果。'}${result.text.length>12000?'\n[微信展示已截断，完整原文保存于任务，可用 /files 和 /file 获取。]':''}\n\n[用量] ${JSON.stringify(result.usage.tokens)}`);});
+   const status=result.permissionsDenied>0?'failed':result.stopReason==='end_turn'?'succeeded':result.stopReason==='cancelled'?'cancelled':'failed';
+   await meter.write({status:result.stopReason==='end_turn'?'passed':'unknown',taskStatus:status,finishedAt:new Date().toISOString(),usage:result.usage});
+   this.store.transaction(()=>{this.store.db.prepare('UPDATE tasks SET status=?,result=? WHERE id=?').run(status,result.text,task.id);this.store.db.prepare('UPDATE turns SET status=?,usage=?,result=? WHERE id=?').run(status,JSON.stringify(result.usage),result.text,turn);this.store.enqueue(task.owner,`[Opus 原文] 任务 ${task.id} · ${status}\n${result.permissionsDenied?`有 ${result.permissionsDenied} 项工具授权被拒绝或过期，任务未标成功。\n`:''}${result.text.slice(0,12000)||'本次无文本结果。'}${result.text.length>12000?'\n[微信展示已截断，完整原文保存于任务，可用 /files 和 /file 获取。]':''}\n\n[用量] ${JSON.stringify(result.usage.tokens)}`);});
    await writeFile(path.join(task.cwd,`result-${turn}.txt`),result.text,{mode:0o660}).catch(()=>this.store.enqueue(task.owner,'任务原文已保存在数据库，但结果文件写入失败。'));
   }catch(e){const code=safeError(e);const status=submitted?'unknown':code.includes('auth')?'waiting_auth':code.includes('rate_limited')?'rate_limited':'failed';
    await meter.write({status:submitted?'unknown':'failed',finishedAt:new Date().toISOString(),code}).catch(()=>{});

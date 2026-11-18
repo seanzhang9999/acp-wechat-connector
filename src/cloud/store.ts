@@ -17,10 +17,12 @@ export class Store {
   transaction<T>(fn:()=>T):T {this.db.exec('BEGIN IMMEDIATE');try{const r=fn();this.db.exec('COMMIT');return r;}catch(e){this.db.exec('ROLLBACK');throw e;}}
   get(k:string):string {return (this.db.prepare('SELECT v FROM meta WHERE k=?').get(k) as any)?.v??'';}
   set(k:string,v:string){this.db.prepare('INSERT INTO meta VALUES(?,?) ON CONFLICT(k) DO UPDATE SET v=excluded.v').run(k,v);}
-  ingest(messages:WeixinMessage[],cursor:string,owner:string){return this.transaction(()=>{
+  ingest(messages:WeixinMessage[],cursor:string,owner:string,notBefore=0){return this.transaction(()=>{
     for(const m of messages){
       if(m.message_type!==1||m.from_user_id!==owner||m.group_id)continue;
-      const source=m.message_id??m.client_id??m.seq;
+      if(m.message_state!==undefined&&m.message_state!==2)continue;
+      if(notBefore&&(!m.create_time_ms||m.create_time_ms<notBefore))continue;
+      const source=m.client_id??(Number.isSafeInteger(m.message_id)?m.message_id:Number.isSafeInteger(m.seq)?m.seq:undefined);
       if(source===undefined||!m.context_token)continue;
       const id=createHash('sha256').update(owner+':'+String(source)).digest('hex');
       this.set('context:'+owner,m.context_token);

@@ -33,7 +33,7 @@ store.recover();store.set('health',deepseek?'online_deepseek':'online_direct');
 let stopping=false;let authExpired=false;
 const stop=()=>{stopping=true;controller.active?.abort.abort();};process.on('SIGTERM',stop);process.on('SIGINT',stop);
 const sleep=(ms:number)=>new Promise(r=>setTimeout(r,ms));
-async function monitor(){let fails=0;while(!stopping){try{const r=await poll(token!,store.get('cursor'));if(stopping)break;store.ingest(r.msgs??[],r.get_updates_buf??'',token!.userId);fails=0;}catch(e){const code=safeError(e);if(code==='ilink_auth_expired'){authExpired=true;store.set('health','waiting_wechat_auth');stop();break;}store.set('last_poll_error',code);await sleep(Math.min(30000,1000*2**Math.min(++fails,5)));}}}
+async function monitor(){let fails=0;while(!stopping){try{const r=await poll(token!,store.get('cursor'));if(stopping)break;store.ingest(r.msgs??[],r.get_updates_buf??'',token!.userId,Date.parse(token!.savedAt)||0);fails=0;}catch(e){const code=safeError(e);if(code==='ilink_auth_expired'){authExpired=true;store.set('health','waiting_wechat_auth');stop();break;}store.set('last_poll_error',code);await sleep(Math.min(30000,1000*2**Math.min(++fails,5)));}}}
 async function inbox(){while(!stopping){const row=store.next();if(row)await controller.handle(row);else await sleep(300);}}
 async function outbox(){while(!stopping){const row=store.db.prepare("SELECT * FROM outbox WHERE status='pending' AND next<=? ORDER BY rowid LIMIT 1").get(Date.now()) as any;
  if(!row){await sleep(400);continue;}

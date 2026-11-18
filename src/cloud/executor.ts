@@ -9,10 +9,13 @@ export class AcpExecutor {
  constructor(private socketPath:string){}
  async run(input:ExecutionInput){
   const socket=connect(this.socketPath);await new Promise<void>((resolve,reject)=>{socket.once('connect',resolve);socket.once('error',()=>reject(Error('executor_unavailable')));});
-  let session='';let text='';let replay=true;let context:object|null=null;let cost:object|null=null;let changed=false;let currentModel=input.model;
+  let session='';let text='';let replay=true;let context:object|null=null;let cost:object|null=null;let changed=false;let currentModel=input.model;let permissionsDenied=0;
   const denied=async():Promise<never>=>{throw Error('client_file_access_denied');};
   const connection=new acp.ClientSideConnection(()=>({
-   requestPermission:async(p:acp.RequestPermissionRequest)=>p.sessionId===session&&!replay&&!input.signal.aborted?input.permission(p):{outcome:{outcome:'cancelled' as const}},
+   requestPermission:async(p:acp.RequestPermissionRequest)=>{
+    if(p.sessionId!==session||replay||input.signal.aborted)return {outcome:{outcome:'cancelled' as const}};
+    const decision=await input.permission(p);if(decision.outcome.outcome==='cancelled')permissionsDenied++;return decision;
+   },
    readTextFile:denied,writeTextFile:denied,extMethod:denied,extNotification:async()=>{},
    sessionUpdate:async(p:acp.SessionNotification)=>{
     if(p.sessionId!==session||replay)return;const u=p.update;
@@ -53,7 +56,7 @@ export class AcpExecutor {
     const started=Date.now();
     const result=await connection.prompt({sessionId:session,prompt:[{type:'text',text:input.prompt}]});
     if(changed)throw Error('model_changed');
-    return {sessionId:session,text,stopReason:result.stopReason,usage:{provider:'antigravity',accountingScope:input.session?'resumed_session_unverified':'fresh_session_single_prompt',acpPrompts:1,internalModelRequests:null,durationMs:Date.now()-started,tokens:sanitizeTokens(result.usage),context,sessionCost:cost,subscriptionRemaining:null}};
+    return {sessionId:session,text,permissionsDenied,stopReason:result.stopReason,usage:{provider:'antigravity',accountingScope:input.session?'resumed_session_unverified':'fresh_session_single_prompt',acpPrompts:1,internalModelRequests:null,durationMs:Date.now()-started,tokens:sanitizeTokens(result.usage),context,sessionCost:cost,subscriptionRemaining:null}};
    })()
   ]);}finally{if(timer)clearTimeout(timer);input.signal.removeEventListener('abort',abort);socket.destroy();}
  }
