@@ -17,3 +17,14 @@ test('iLink send timeout and API errors never count as delivery success',async()
 test('messages before pairing and unfinished partials do not execute',()=>{const s=new Store(':memory:');s.ingest([{...message,create_time_ms:5},{...message,message_id:2,create_time_ms:20,message_state:1},{...message,message_id:3,create_time_ms:20,message_state:2}],'c','owner',10);assert.equal(s.db.prepare('SELECT count(*) n FROM inbox').get()?.n,1);s.close();});
 
 test('denied operation is a failed task but retains model token usage',async()=>{const root=await mkdtemp(path.join(os.tmpdir(),'awei-deny-'));const s=new Store(':memory:');const c=new CloudController(s,{run:async(i:any)=>{await i.onSession('s');await i.onSubmitted();return {text:'attempted',stopReason:'end_turn',permissionsDenied:1,usage:{tokens:{totalTokens:123}}};}} as any,root,path.join(root,'usage'),'opus');try{s.ingest([message],'c','owner');await c.handle(s.next()!);await c.active?.promise;assert.equal(s.list('owner')[0].status,'failed');assert.match(String(s.db.prepare('SELECT usage FROM turns').get()?.usage),/123/);}finally{s.close();await rm(root,{recursive:true,force:true});}});
+
+test('DeepSeek corrects invalid extra fields once without relaxing action schema',async()=>{
+ let calls=0;
+ const svc=new DeepSeekLanguageService('secret','test',async()=>{
+  calls++;return new Response(JSON.stringify({choices:[{finish_reason:'stop',message:{content:calls===1?' {"action":"new","task":null}':'{"action":"new"}'}}]}));
+ });
+ assert.deepEqual(parseAction(await svc.ask('new task')),{action:'new'});assert.equal(calls,2);
+ let invalidCalls=0;
+ const invalid=new DeepSeekLanguageService('secret','test',async()=>{invalidCalls++;return new Response(JSON.stringify({choices:[{finish_reason:'stop',message:{content:'{"action":"new","command":"unsafe"}'}}]}));});
+ await assert.rejects(invalid.ask('new task'),/deepseek_invalid_action/);assert.equal(invalidCalls,2);
+});
