@@ -21,7 +21,22 @@ export class CloudController {
    if(text.length>20000)throw Error('request_too_long');
    const approval=text.match(/^\/(approve|deny) ([a-f0-9]{16})$/);
    if(approval){reply(this.approvals.resolve(owner,approval[2],approval[1]==='approve')?'审批已处理（仅本次请求）。':'审批不存在、已过期或不属于你。');return;}
-   if(text==='/help'||text==='帮助'){reply('阿维云端助手\n/new 请求：新建 Opus 任务\n/continue 任务ID 追加要求\n/list\n/status 任务ID\n/cancel 任务ID\n/usage [任务ID]\n/files 任务ID\n/file 任务ID 文件名\n/model 模型ID：仅改变后续新任务\n自然语言由 DeepSeek 选择受控动作；审批必须用 /approve 或 /deny。');return;}
+   const decision=text.match(/^(?:对当前(?:任务|操作|授权)[，,:： ]*)?(不同意|拒绝|同意|批准)[。！!]?$/);
+   const feedback=/(?:授权|审批).{0,40}(?:同意|不同意)|(?:同意|不同意).{0,40}(?:授权|审批)/s.test(text)
+    && /(?:以后|学会|让我|这种|改进|支持)/.test(text);
+   const combined=text.match(/^对当前(?:任务|操作|授权)[，,:： ]*(不同意|拒绝|同意|批准)[，,。；; ]*(?:并且|同时).*(?:中间(?:智能体|Agent)|阿维).*(?:学会|以后|改进)/is);
+   if(decision||combined){
+    const allow=/^(同意|批准)$/.test((decision??combined)![1]);
+    const accepted=this.approvals.resolveReply(owner,allow,Number(msg.create_time_ms));
+    reply(accepted?(`本次工具授权已${allow?'同意':'拒绝'}，已交给 agy 处理。`):'没有可与这条回复对应的唯一有效授权。请使用原授权消息里的带编号命令，或在任务结束后重新发起所需操作。');
+    if(combined)reply('阿维已支持这项交互：收到明确的授权消息后，可以直接回复“同意”或“不同意”，我会处理这一次授权。');
+    return;
+   }
+   if(feedback){
+    reply('阿维已支持这项交互：有一条已送达且有效的授权请求时，你可以直接回复“同意”或“不同意”，我会把你的选择交给 agy。要指定某条授权，也可以使用带编号的命令。');
+    return;
+   }
+   if(text==='/help'||text==='帮助'){reply('阿维云端助手\n/new 请求：新建 Opus 任务\n/continue 任务ID 追加要求\n/list\n/status 任务ID\n/cancel 任务ID\n/usage [任务ID]\n/files 任务ID\n/file 任务ID 文件名\n/model 模型ID：仅改变后续新任务\n自然语言由 DeepSeek 选择受控动作；授权消息可直接回复同意或不同意，也可以使用带编号的命令。');return;}
    const file=text.match(/^\/(files|file) ([a-f0-9]{12})(?: (.+))?$/);
    if(file){const task=this.store.task(file[2],owner);if(!task)throw Error('task_not_found');if(file[1]==='files'){reply((await readdir(task.cwd)).slice(0,50).join('\n')||'任务目录暂无文件。');}else{if(!file[3])throw Error('missing_file_name');await safeFile(task.cwd,file[3]);this.store.db.prepare('INSERT INTO outbox(id,owner,body) VALUES(?,?,?)').run('file-'+randomUUID(),owner,JSON.stringify({kind:'file',root:task.cwd,name:file[3]}));}return;}
    const model=text.match(/^\/model ([a-zA-Z0-9._-]{1,100})$/);

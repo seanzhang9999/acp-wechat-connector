@@ -13,7 +13,7 @@ export class Approvals {
   this.store.transaction(()=>{
    this.store.db.prepare('INSERT INTO approvals VALUES(?,?,?,?,?,?)').run(id,task,owner,expires,'pending',title);
    this.store.db.prepare("UPDATE tasks SET status='waiting_approval' WHERE id=?").run(task);
-   this.store.enqueue(owner,`任务 ${task} 请求一次授权：\n${title}\n参数摘要（不可信工具内容）：${input}\n两分钟内回复：\n/approve ${id}\n或 /deny ${id}\n请仅对你理解并同意的操作批准。`);
+   this.store.db.prepare("INSERT INTO outbox(id,owner,body) VALUES(?,?,?)").run(`approval-${id}`,owner,`任务 ${task} 请求一次授权：\n${title}\n参数摘要（不可信工具内容）：${input}\n两分钟内可直接回复“同意”或“不同意”。如需指定这条授权：\n/approve ${id}\n或 /deny ${id}\n请仅对你理解并同意的操作批准。`);
   });
   const allowed=await new Promise<boolean>(resolve=>{
    let settled=false;const finish=(yes:boolean)=>{if(settled)return;settled=true;clearTimeout(timer);signal.removeEventListener('abort',cancel);this.waiting.delete(id);resolve(yes);};
@@ -22,6 +22,14 @@ export class Approvals {
   });
   this.store.transaction(()=>{this.store.db.prepare("UPDATE approvals SET status=? WHERE id=? AND status='pending'").run(allowed?'approved':'denied_or_expired',id);this.store.db.prepare("UPDATE tasks SET status='running' WHERE id=? AND status='waiting_approval'").run(task);});
   return allowed?{outcome:{outcome:'selected',optionId:option.optionId}}:{outcome:{outcome:'cancelled'}};
+ }
+ resolveReply(owner:string,allow:boolean,receivedAt:number){
+  const pending=Array.from(this.waiting.entries()).filter(([,p])=>p.owner===owner&&p.expires>Date.now());
+  if(pending.length!==1)return false;
+  const [id]=pending[0];
+  const sentAt=Number(this.store.get('approval_sent:'+id));
+  if(!Number.isSafeInteger(receivedAt)||!sentAt||receivedAt<sentAt)return false;
+  return this.resolve(owner,id,allow);
  }
  resolve(owner:string,id:string,allow:boolean){const p=this.waiting.get(id);if(!p||p.owner!==owner||p.expires<=Date.now())return false;p.resolve(allow);return true;}
 }

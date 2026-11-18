@@ -51,7 +51,10 @@ async function outbox(){while(!stopping){const row=store.db.prepare("SELECT * FR
    if(!body.media){const file=await safeFile(body.root,body.name);body.media=await uploadFileMedia(row.owner,file.data,opts,{getUploadUrlFn:async p=>requestIlink(token!,'getuploadurl',p.body)});body.name=file.name;store.db.prepare('UPDATE outbox SET body=? WHERE id=?').run(JSON.stringify(body),row.id);}
    await sendFileItem(row.owner,body.media,body.name,opts,row.id,async p=>{await requestIlink(token!,'sendmessage',p.body);});
   }else await send(token!,row.owner,context,row.id,row.body);
-  store.db.prepare("UPDATE outbox SET status='sent' WHERE id=?").run(row.id);
+  store.transaction(()=>{
+   store.db.prepare("UPDATE outbox SET status='sent' WHERE id=?").run(row.id);
+   if(row.id.startsWith('approval-'))store.set('approval_sent:'+row.id.slice(9),String(Date.now()));
+  });
  }catch(e){const attempts=row.attempts+1;store.db.prepare('UPDATE outbox SET attempts=?,next=?,status=? WHERE id=?').run(attempts,Date.now()+Math.min(300000,2000*2**Math.min(attempts,7)),attempts>=8?'delivery_failed':'pending',row.id);store.set('last_send_error',safeError(e));}
 }}
 console.log(JSON.stringify({event:'awei_cloud_started',deepseek:!!deepseek,paired:true}));

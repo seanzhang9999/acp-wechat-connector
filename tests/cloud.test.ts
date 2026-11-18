@@ -28,3 +28,25 @@ test('DeepSeek corrects invalid extra fields once without relaxing action schema
  const invalid=new DeepSeekLanguageService('secret','test',async()=>{invalidCalls++;return new Response(JSON.stringify({choices:[{finish_reason:'stop',message:{content:'{"action":"new","command":"unsafe"}'}}]}));});
  await assert.rejects(invalid.ask('new task'),/deepseek_invalid_action/);assert.equal(invalidCalls,2);
 });
+
+test('plain language permission replies are bound to a delivered, live request',async()=>{
+ const store=new Store(':memory:');
+ const controller=new CloudController(store,{} as AcpExecutor,'/tmp','/tmp','opus');
+ const permission=controller.approvals.request('task','owner',{
+  sessionId:'session',toolCall:{toolCallId:'tool',title:'read'},
+  options:[{optionId:'yes',kind:'allow_once',name:'Allow'}],
+ },new AbortController().signal);
+ const {id}=store.db.prepare('SELECT id FROM approvals').get() as {id:string};
+ const now=Date.now();
+ assert.equal(controller.approvals.resolveReply('owner',true,now),false);
+ store.set('approval_sent:'+id,String(now));
+ assert.equal(controller.approvals.resolveReply('owner',true,now-1),false);
+ assert.equal(controller.approvals.resolveReply('other',true,now),false);
+ store.ingest([{...message,create_time_ms:now,item_list:[{type:1,text_item:{
+  text:'对当前任务同意 并且你作为中间智能体要学会以后这样处理',
+ }}]}],'cursor','owner');
+ await controller.handle(store.next()!);
+ assert.deepEqual(await permission,{outcome:{outcome:'selected',optionId:'yes'}});
+ assert.equal(controller.approvals.resolveReply('owner',true,now),false);
+ store.close();
+});
