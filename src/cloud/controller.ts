@@ -5,14 +5,15 @@ import path from 'node:path';
 import {Store,type Task} from './store.js';
 import {AcpExecutor} from './executor.js';
 import {Approvals} from './approvals.js';
-import {parseAction,type DeepSeekLanguageService} from './deepseek.js';
+import {parseAction} from './deepseek.js';
+import type {Router} from './dsh-router.js';
 import {UsageLedger} from '../antigravity/usage-ledger.js';
 import {receiveFiles,safeFile} from './files.js';
 import type {WeixinMessage} from '../weixin/types.js';
 export class CloudController {
  active:{task:string;abort:AbortController;promise:Promise<void>}|null=null;
  approvals:Approvals;
- constructor(private store:Store,private executor:AcpExecutor,private root:string,private usageDir:string,private model:string,private deepseek?:DeepSeekLanguageService){this.approvals=new Approvals(store);}
+ constructor(private store:Store,private executor:AcpExecutor,private root:string,private usageDir:string,private model:string,private deepseek?:Router,private useHarnessChoices=false){this.approvals=new Approvals(store);}
  async handle(row:{id:string;owner:string;body:string}){
   if(!this.store.claim(row.id))return;
   const msg=JSON.parse(row.body) as WeixinMessage;const owner=row.owner;
@@ -74,7 +75,7 @@ export class CloudController {
     }
     return;
    }
-   if(/^(?:选[项择]?[ ]*)?\d{1,2}[。.]?$/.test(text)){
+   if(!this.useHarnessChoices&&/^(?:选[项择]?[ ]*)?\d{1,2}[。.]?$/.test(text)){
     reply('我无法把单独的序号可靠对应到之前的选项。请直接说你要做的事，例如“把刚才的附件给任务”并带上任务 ID。');
     return;
    }
@@ -86,7 +87,7 @@ export class CloudController {
    else{
     if(text.startsWith('/'))throw Error('unknown_command');
     if(!this.deepseek){reply('DeepSeek 尚未配置。当前可用 /new 请求 直接调用 Opus，以及 /help 中的管理命令。');return;}
-    action=parseAction(await this.deepseek.ask(JSON.stringify({request:text||'[用户发送附件，请明确要如何处理]',tasks:this.store.list(owner).map(t=>({id:t.id,status:t.status,request:t.original.slice(0,150)}))})));
+    action=parseAction(await this.deepseek.ask(JSON.stringify({request:text||'[用户发送附件，请明确要如何处理]',tasks:this.store.list(owner).map(t=>({id:t.id,status:t.status,request:t.original.slice(0,150)}))}),owner));
    }
    if(action.action==='clarify'){reply('阿维：'+action.question);return;}
    if(action.action==='list'){reply(this.store.list(owner).map(t=>`${t.id} ${t.status} ${t.model}\n${t.original.slice(0,80)}`).join('\n\n')||'暂无任务。');return;}

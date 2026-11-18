@@ -65,3 +65,11 @@ Invoke-Item $qrFile
 ```
 
 手机确认后，检查 token 存在和配对owner再启动业务。图片过期时重新执行；Windows临时图片扫码后可删除。该PowerShell片段未经Windows实机验收。
+
+## 阿维路由切换
+
+`AWEI_ROUTER_BACKEND=direct` 使用既有 DeepSeek 路由，`dsh` 使用 DeepSeek Harness 会话路由。两者共用已配置的 DeepSeek 账号与模型。微信配对、任务台账、真实审批、agy ACP、Opus 用量及额度采样沿用现有服务。
+
+DSH 运行目录须安装匹配的 `@deepseek-ai/dsh` 和 `@deepseek-ai/dsh-sdk-client`，与 Node 24 或更高版本配套。把 `dsh-route.mjs` 和 `dsh-router.cordis.patch.yml` 放在该目录，分别配置 `AWEI_DSH_NODE`、`AWEI_DSH_WORKER` 和绝对路径 `AWEI_DSH_HOME`。运行文件应由部署账号守护，状态目录由微信服务账号以 0700 管理。生产适配器只传路由请求及任务简表，DSH 从启用时开始积累历史。已有消息、附件字节和 agy 原文没有迁入 DSH。自带终端、文件工具和 MCP 资源工具由固定配置禁用。
+
+切换前确认没有执行中任务，改环境配置并重启 `awei-wechat.service`，检查启动日志里的 `backend`。回退时设为 `direct` 并重启。DSH 失败显示路由错误，避免一次消息在不同会话里被自动重试或重复执行。

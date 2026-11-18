@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import {DshRouter,type Router} from '../src/cloud/dsh-router.js';
 import {mkdir,readFile,chmod} from 'node:fs/promises';
 import path from 'node:path';
 import qrcode from 'qrcode-terminal';
@@ -28,14 +29,25 @@ if(process.argv.includes('--login')){
 const store=new Store(path.join(state,'tasks.sqlite'));await chmod(path.join(state,'tasks.sqlite'),0o600);
 if(process.argv.includes('--status')){console.log(JSON.stringify({health:store.get('health'),tasks:store.db.prepare('SELECT status,COUNT(*) count FROM tasks GROUP BY status').all(),outbox:store.db.prepare('SELECT status,COUNT(*) count FROM outbox GROUP BY status').all()}));store.close();process.exit(0);}
 const token=loadToken(state);if(!token?.token||!token.userId)throw Error('wechat_login_required');
-let deepseek:DeepSeekLanguageService|undefined;
+let deepseek:Router|undefined;
+const backend=process.env.AWEI_ROUTER_BACKEND||'direct';
+if(backend!=='direct'&&backend!=='dsh')throw Error('invalid_router_backend');
+if(backend==='dsh'&&!process.env.DEEPSEEK_MODEL)throw Error('deepseek_model_missing');
 if(process.env.DEEPSEEK_MODEL){
  const credential=process.env.CREDENTIALS_DIRECTORY?path.join(process.env.CREDENTIALS_DIRECTORY,'deepseek.key'):process.env.DEEPSEEK_KEY_FILE;
  if(!credential)throw Error('deepseek_key_missing');const key=(await readFile(credential,'utf8')).trim();if(!key)throw Error('deepseek_key_missing');
- deepseek=new DeepSeekLanguageService(key,process.env.DEEPSEEK_MODEL);
- if(!(await deepseek.models()).includes(process.env.DEEPSEEK_MODEL))throw Error('deepseek_model_unavailable');
+ const direct=new DeepSeekLanguageService(key,process.env.DEEPSEEK_MODEL);
+ if(!(await direct.models()).includes(process.env.DEEPSEEK_MODEL))throw Error('deepseek_model_unavailable');
+ deepseek=direct;
+ if(backend==='dsh'){
+  const {AWEI_DSH_NODE:node,AWEI_DSH_WORKER:worker,AWEI_DSH_HOME:home}=process.env;
+  if(!node||!worker||!home)throw Error('dsh_configuration_missing');
+  deepseek=new DshRouter(node,worker,{
+   HOME:home,DSH_HOME:home,PATH:'/usr/bin:/bin',DEEPSEEK_API_KEY:key,DEEPSEEK_MODEL:process.env.DEEPSEEK_MODEL,
+  },owner=>store.get('dsh_session:'+owner),(owner,id)=>store.set('dsh_session:'+owner,id));
+ }
 }
-const controller=new CloudController(store,new AcpExecutor(process.env.AGY_SOCKET||'/run/awei-acp.sock'),process.env.AWEI_WORKSPACE_ROOT||'/var/lib/awei-workspaces',path.join(state,'usage'),process.env.AGY_MODEL_ID||'claude-opus-4-6-thinking',deepseek);
+const controller=new CloudController(store,new AcpExecutor(process.env.AGY_SOCKET||'/run/awei-acp.sock'),process.env.AWEI_WORKSPACE_ROOT||'/var/lib/awei-workspaces',path.join(state,'usage'),process.env.AGY_MODEL_ID||'claude-opus-4-6-thinking',deepseek,backend==='dsh');
 store.recover();store.set('health',deepseek?'online_deepseek':'online_direct');
 let stopping=false;let authExpired=false;
 const stop=()=>{stopping=true;controller.active?.abort.abort();};process.on('SIGTERM',stop);process.on('SIGINT',stop);
@@ -57,7 +69,7 @@ async function outbox(){while(!stopping){const row=store.db.prepare("SELECT * FR
   });
  }catch(e){const attempts=row.attempts+1;store.db.prepare('UPDATE outbox SET attempts=?,next=?,status=? WHERE id=?').run(attempts,Date.now()+Math.min(300000,2000*2**Math.min(attempts,7)),attempts>=8?'delivery_failed':'pending',row.id);store.set('last_send_error',safeError(e));}
 }}
-console.log(JSON.stringify({event:'awei_cloud_started',deepseek:!!deepseek,paired:true}));
+console.log(JSON.stringify({event:'awei_cloud_started',deepseek:!!deepseek,backend,paired:true}));
 await Promise.all([monitor(),inbox(),outbox()]);
 if(controller.active)await controller.active.promise;
 if(!authExpired)store.set('health','stopped');store.close();
