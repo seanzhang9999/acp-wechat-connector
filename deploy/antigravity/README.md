@@ -57,3 +57,22 @@ A 真实通过后才实施 B：独立 iLink 配对、单轮询 owner、任务锁
 记录代码 commit、lockfile、Node/CLI 版本，先在隔离目录构建测试；升级官方 CLI 前保存可回退的安装版本信息。不要覆盖 Mac 现有实例、state.json 或微信登录态。
 
 本阶段失败时停止 probe unit，保留脱敏 receipt；不启动后续服务。切回此前代码 checkout/官方 CLI 版本后重新做 A 验证；不删除账号凭据、会话或成果。授权失败返回交互登录；断网/超时/结果不明不得自动重发业务任务。以后 B/C 的 unknown 状态和恢复策略仍待实现。
+
+## 实际 agy 用量计量（2026-11-18 增补）
+
+设置 `AGY_USAGE_DIR=/var/lib/awei-antigravity/usage`，计量目录位于 Agent 工作目录之外。
+每次探测创建唯一持久记录；提交 prompt 前先写入标记，结束后原子更新。中途退出留下 unknown，不能算零消耗或自动补跑。仅记录模型 ID、时间、结果、已提交 prompt 数和服务端用量字段，不存 prompt、模型正文或凭据。
+
+```sh
+AGY_USAGE_DIR=/var/lib/awei-antigravity/usage node dist/bin/antigravity-usage.js
+```
+
+统计边界：
+- 一次 ACP prompt 是一次逻辑调用，内部可能多次请求 LLM，不能称作一次底层推理；内部次数未上报则为 null。
+- 本探测器每次新会话且只发一次 prompt，可对这些独立会话的 provider token 回包求和；以后业务恢复会话须先确认 provider 的累计/增量语义再接入，禁止重复累计。
+- token 字段分别保留 input/output/total/cache read/cache write/thought；不把可能重叠的字段相加生成总量。缺失不是 0。
+- usage_update.used/size 是上下文占用；cost 是会话累计成本（若上报）；两者都不是订阅余量。cost 不按 Anthropic API 标价推算订阅消耗。
+- DeepSeek 的调用单独计量，此记录只覆盖本执行入口。Mac/IDE/其他 CLI 对同一账号的消耗不在本地调用账内。
+- 官方 `/usage`（`/quota`）面板提供模型组的周额度与五小时额度；Claude/GPT 共享组，不等于 Opus 专属额度。当前未找到已验证的非交互额度导出接口，不提取 token 或调用私有刷新协议。
+
+余量测算：先记录官方同一额度窗口的前后百分比、刷新/重置时间、本地调用数和任务类别；只在无其他客户端消耗、没有窗口重置且下降可辨认时算每类任务平均百分点消耗。`可再做任务数 ≈ 剩余百分点 / 同类任务平均百分点消耗`，分别计算周/五小时窗口取较小值。应给区间并展示样本数；样本不足、百分比舍入不变、跨窗口或账号并发使用时不报告确定次数。不为校准刷无意义请求；随真实任务积累样本。当前真实业务样本尚不足。
