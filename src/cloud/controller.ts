@@ -42,6 +42,42 @@ export class CloudController {
    if(file){const task=this.store.task(file[2],owner);if(!task)throw Error('task_not_found');if(file[1]==='files'){reply((await readdir(task.cwd)).slice(0,50).join('\n')||'任务目录暂无文件。');}else{if(!file[3])throw Error('missing_file_name');await safeFile(task.cwd,file[3]);this.store.db.prepare('INSERT INTO outbox(id,owner,body) VALUES(?,?,?)').run('file-'+randomUUID(),owner,JSON.stringify({kind:'file',root:task.cwd,name:file[3]}));}return;}
    const model=text.match(/^\/model ([a-zA-Z0-9._-]{1,100})$/);
    if(model){this.store.set('default_model',model[1]);reply(`后续新任务请求模型设为 ${model[1]}；每次执行仍核验服务端模型列表，不可用就停止，不自动替换。现有任务保持原模型。`);return;}
+   const attachmentItems=(msg.item_list??[]).filter(item=>item.file_item||item.image_item);
+   if(attachmentItems.length&&!text){
+    this.store.set('unassigned_attachment:'+owner,row.id);
+    reply('收到附件。我已保留这次上传的记录。要交给已有任务，请说“把刚才的附件给任务”并带上任务 ID。');
+    return;
+   }
+   const attachmentTask=text.match(/^(?:阿维[，,：: ]*)?(?:请)?(?:帮我)?(?:把|将)[^\n]{0,45}?(?:文件|附件)[^\n]{0,30}?(?:交给|传给|给|到)[^\n]{0,20}?([a-f0-9]{12})[。！! ]*$/);
+   if(attachmentTask){
+    const task=this.store.task(attachmentTask[1],owner);
+    if(!task)throw Error('task_not_found');
+    if(this.active?.task===task.id){
+     reply('这个任务正在执行。请等本轮结束后再把附件交给它。');
+     return;
+    }
+    const pendingKey='unassigned_attachment:'+owner;
+    const receipt=this.store.get(pendingKey);
+    const saved=this.store.db.prepare('SELECT body FROM inbox WHERE id=? AND owner=?').get(receipt,owner) as {body:string}|undefined;
+    const source=attachmentItems.length?attachmentItems:saved?
+     (JSON.parse(saved.body) as WeixinMessage).item_list?.filter(item=>item.file_item||item.image_item)??[]:[];
+    if(!source.length){
+     reply('我没有找到待转交的附件。你可以直接上传文件，我收到后会确认。');
+     return;
+    }
+    try{
+     const names=await receiveFiles(task.cwd,source);
+     if(!attachmentItems.length)this.store.set(pendingKey,'');
+     reply(`已把附件交给任务 ${task.id}：${names.join('、')}。可以回复 /continue ${task.id} 加上你的处理要求。`);
+    }catch{
+     reply('我找到了这条微信附件记录，但没能下载成功。请重新上传文件。');
+    }
+    return;
+   }
+   if(/^(?:选[项择]?[ ]*)?\d{1,2}[。.]?$/.test(text)){
+    reply('我无法把单独的序号可靠对应到之前的选项。请直接说你要做的事，例如“把刚才的附件给任务”并带上任务 ID。');
+    return;
+   }
    let action:ReturnType<typeof parseAction>;let prompt=text;
    if(text.startsWith('/new ')){action={action:'new'};prompt=text.slice(5);}
    else if(/^\/continue ([a-f0-9]{12})\s+[\s\S]+$/.test(text)){const m=text.match(/^\/continue ([a-f0-9]{12})\s+([\s\S]+)$/)!;action={action:'continue',task:m[1]};prompt=m[2];}
