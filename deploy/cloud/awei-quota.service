@@ -1,0 +1,8 @@
+[Unit]
+Description=Observe official Antigravity quota after completed Opus calls
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /opt/awei-antigravity/quota-sampler/sample-quota.py
+TimeoutStartSec=65

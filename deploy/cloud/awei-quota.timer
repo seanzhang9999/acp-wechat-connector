@@ -1,0 +1,10 @@
+[Unit]
+Description=Check for newly completed Opus calls
+
+[Timer]
+OnBootSec=30s
+OnUnitInactiveSec=15s
+AccuracySec=2s
+
+[Install]
+WantedBy=timers.target
