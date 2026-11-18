@@ -87,7 +87,12 @@ export class CloudController {
    else{
     if(text.startsWith('/'))throw Error('unknown_command');
     if(!this.deepseek){reply('DeepSeek 尚未配置。当前可用 /new 请求 直接调用 Opus，以及 /help 中的管理命令。');return;}
-    action=parseAction(await this.deepseek.ask(JSON.stringify({request:text||'[用户发送附件，请明确要如何处理]',tasks:this.store.list(owner).map(t=>({id:t.id,status:t.status,request:t.original.slice(0,150)}))}),owner));
+    const tasks=await Promise.all(this.store.list(owner).map(async t=>{
+     const entries=await readdir(t.cwd,{withFileTypes:true}).catch(()=>[]);
+     const attachments=entries.filter(e=>e.isFile()&&e.name.startsWith('input-')).slice(0,12).map(e=>e.name.slice(15,175));
+     return {id:t.id,status:t.status,resumable:!!t.session,request:t.original.slice(0,150),attachments};
+    }));
+    action=parseAction(await this.deepseek.ask(JSON.stringify({request:text||'[用户发送附件，请明确要如何处理]',tasks}),owner));
    }
    if(action.action==='clarify'){reply('阿维：'+action.question);return;}
    if(action.action==='list'){reply(this.store.list(owner).map(t=>`${t.id} ${t.status} ${t.model}\n${t.original.slice(0,80)}`).join('\n\n')||'暂无任务。');return;}
