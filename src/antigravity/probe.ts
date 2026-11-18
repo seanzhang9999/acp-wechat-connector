@@ -68,6 +68,7 @@ export async function probeAntigravity(options: ProbeOptions) {
     child.once("error", () => reject(Error("cli_spawn_failed")));
     void connection.closed.then(() => reject(Error("acp_disconnected")));
   });
+  let primaryError: unknown;
   try {
     return await Promise.race([
       disconnected,
@@ -114,9 +115,14 @@ export async function probeAntigravity(options: ProbeOptions) {
             tokens: sanitizeTokens(result.usage), context, sessionCost, subscriptionRemaining: null } };
       })(),
     ]);
+  } catch (error) {
+    primaryError = error; throw error;
   } finally {
     if (timer) clearTimeout(timer);
-    await killAgentAndWait(child);
+    try { await killAgentAndWait(child); } catch (cleanupError) {
+      if (primaryError) throw new AggregateError([primaryError, cleanupError], `${primaryError instanceof Error ? primaryError.message : "probe_failed"}; cleanup_failed`);
+      throw cleanupError;
+    }
   }
 }
 
