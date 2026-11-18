@@ -1,0 +1,10 @@
+[Unit]
+Description=Private ACP execution socket
+[Socket]
+ListenStream=/run/awei-acp.sock
+Accept=yes
+SocketUser=awei-wechat
+SocketMode=0600
+MaxConnections=1
+[Install]
+WantedBy=sockets.target

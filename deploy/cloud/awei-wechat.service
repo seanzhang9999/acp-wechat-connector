@@ -1,0 +1,29 @@
+[Unit]
+Description=Awei personal WeChat task service
+After=network-online.target awei-acp.socket
+Requires=awei-acp.socket
+ConditionPathExists=/var/lib/awei-wechat/token.json
+StartLimitIntervalSec=300
+StartLimitBurst=3
+[Service]
+User=awei-wechat
+Group=awei-wechat
+SupplementaryGroups=awei-work
+WorkingDirectory=/var/lib/awei-wechat
+Environment=HOME=/var/lib/awei-wechat
+Environment=AWEI_STATE_DIR=/var/lib/awei-wechat
+Environment=AWEI_WORKSPACE_ROOT=/var/lib/awei-workspaces
+Environment=AGY_SOCKET=/run/awei-acp.sock
+EnvironmentFile=/etc/awei-wechat/service.env
+LoadCredential=deepseek.key:/etc/awei-wechat/deepseek.key
+ExecStart=/usr/bin/flock -n /var/lib/awei-wechat/poll.lock /opt/awei-antigravity/node-v22.23.5-linux-x64/bin/node /opt/awei-antigravity/cloud-current/dist/bin/awei-cloud.js
+Restart=on-failure
+RestartSec=15
+TimeoutStopSec=50
+KillMode=control-group
+UMask=0007
+NoNewPrivileges=true
+MemoryHigh=128M
+MemoryMax=256M
+[Install]
+WantedBy=multi-user.target

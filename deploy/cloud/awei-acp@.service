@@ -1,0 +1,20 @@
+[Unit]
+Description=Isolated Antigravity ACP execution
+[Service]
+User=awei-antigravity
+Group=awei-work
+WorkingDirectory=/var/lib/awei-workspaces
+Environment=HOME=/var/lib/awei-antigravity
+Environment=PATH=/var/lib/awei-antigravity/.local/bin:/usr/bin:/bin
+ExecStart=/usr/bin/python3 /usr/local/libexec/awei-acp-relay.py
+StandardInput=socket
+StandardOutput=socket
+StandardError=null
+KillMode=control-group
+RuntimeMaxSec=600
+TimeoutStopSec=8
+UMask=0007
+MemoryHigh=256M
+MemoryMax=512M
+Nice=10
+NoNewPrivileges=true
