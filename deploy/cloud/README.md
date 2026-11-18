@@ -53,3 +53,15 @@ SQLite WAL + synchronous FULL：每批消息与 cursor 同一事务落盘，再�
 ## Windows 终端二维码显示不清
 
 `sudo /usr/local/sbin/awei-wechat-login --qr-image-only` 保持扫码进程运行，同时写入私有 `/var/lib/awei-wechat/wechat-login.png`（600）。图片为本机生成的无损 PNG、整数倍像素及四模块白边，无第三方二维码服务。运维可通过现有 SSH 安全取得图片并展示给本人；不要发布到公开网站或提交 Git。刷新二维码会原子替换图片，结束/失败时删除。图片对应短时登录挑战，不包含登录成功后返回的 bot token。微信消息服务仍不会自动启动。
+
+聊天图片不可见时，安装 `wechat-qr-export.sh` 为 `/usr/local/sbin/awei-wechat-qr-export`。它用临时 systemd 单元运行最长360秒的配对流程，仅经已认证SSH输出PNG的base64；不开放网页、不输出bot token、不启动消息轮询。Windows PowerShell：
+
+```powershell
+$qr = ssh ubuntu@aihunt.duckdns.org "sudo -n /usr/local/sbin/awei-wechat-qr-export"
+if ($LASTEXITCODE -ne 0) { throw "二维码生成失败，请告知错误提示" }
+$qrFile = Join-Path $env:TEMP 'awei-wechat-login.png'
+[IO.File]::WriteAllBytes($qrFile, [Convert]::FromBase64String(($qr -join '')))
+Invoke-Item $qrFile
+```
+
+手机确认后，检查 token 存在和配对owner再启动业务。图片过期时重新执行；Windows临时图片扫码后可删除。该PowerShell片段未经Windows实机验收。
