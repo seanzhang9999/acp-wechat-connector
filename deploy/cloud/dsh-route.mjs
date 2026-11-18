@@ -20,6 +20,7 @@ const runtime=new DeepSeekHarness({
  processCwd:home,
  patches:[path.join(import.meta.dirname,'dsh-router.cordis.patch.yml')],
  env:{...process.env,DSH_SYSTEM_PROMPT:instructions},
+ initializeTimeoutMs:40_000,
  requestTimeoutMs:40_000,
  cwd:home,
  provider:'deepseek-official',
@@ -31,8 +32,9 @@ try{
  const result=await context.run(input);
  console.log(JSON.stringify({session:result.sessionId,action:JSON.parse(result.finalResponse)}));
 }catch(error){
- console.error('DSH_ROUTE_ERROR',error.name,String(error.message).slice(0,350));
- process.exitCode=1;
+ if(error.name==='RequestTimeoutError')process.exitCode=String(error.message).startsWith('initialize ')?11:12;
+ else if(error instanceof SyntaxError)process.exitCode=13;
+ else process.exitCode=1;
 }finally{
  await runtime.close();
 }

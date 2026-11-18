@@ -31,7 +31,7 @@ export class DshRouter implements Router {
      try { process.kill(-child.pid, 'SIGKILL'); } catch { /* already exited */ }
     }
    };
-   const timeout = setTimeout(() => stop('dsh_timeout'), 60_000);
+   const timeout = setTimeout(() => stop('dsh_timeout'), 100_000);
    child.on('error', () => { failure = 'dsh_start_failed'; });
    child.stdin.on('error', () => { failure ||= 'dsh_input_failed'; });
    child.stdout.setEncoding('utf8').on('data', chunk => {
@@ -41,7 +41,10 @@ export class DshRouter implements Router {
    });
    child.on('close', code => {
     clearTimeout(timeout);
-    if (failure || code !== 0) reject(Error(failure || 'dsh_route_failed'));
+    if (failure || code !== 0) {
+     const reason = ({11:'dsh_initialize_timeout',12:'dsh_request_timeout',13:'dsh_invalid_json'} as Record<number,string>)[code ?? -1];
+     reject(Error(failure || reason || 'dsh_route_failed'));
+    }
     else resolve(data);
    });
    child.stdin.end(JSON.stringify({input, session}));
