@@ -1,0 +1,21 @@
+[Unit]
+Description=Antigravity stage A single invocation (no WeChat)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=awei-antigravity
+Group=awei-antigravity
+WorkingDirectory=/var/lib/awei-antigravity/probe-workspace
+EnvironmentFile=/etc/awei-antigravity/probe.env
+ExecStart=/usr/bin/node /opt/acp-wechat-connector/dist/bin/antigravity-probe.js
+TimeoutStartSec=120
+KillMode=control-group
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+StandardOutput=journal
+StandardError=journal
+# No Restart, timer, or Install section: never repeatedly spend quota or enable at boot.
+# Review node path, UID, HOME, dbus and keyring on the chosen host before installation.

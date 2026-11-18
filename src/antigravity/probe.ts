@@ -1,0 +1,109 @@
+import { spawn } from "node:child_process";
+import { Readable, Writable } from "node:stream";
+import * as acp from "@agentclientprotocol/sdk";
+import { killAgentAndWait } from "../acp/agent-manager.js";
+
+export interface ProbeOptions {
+  command: string;
+  args?: string[];
+  cwd: string;
+  modelId?: string;
+  modelConfigId?: string;
+  timeoutMs?: number;
+}
+
+/** Stage A only: no WeChat, no task replay, no automatic authorization. */
+export async function probeAntigravity(options: ProbeOptions) {
+  const timeoutMs = options.timeoutMs ?? 90_000;
+  if (!Number.isFinite(timeoutMs) || timeoutMs < 100 || timeoutMs > 300_000)
+    throw Error("invalid_timeout");
+  const child = spawn(options.command, options.args ?? ["acp"], {
+    cwd: options.cwd, shell: false, stdio: "pipe", detached: process.platform !== "win32",
+  });
+  // OAuth URLs/codes and provider diagnostics never enter receipts or journal.
+  child.stderr.resume();
+  await new Promise<void>((resolve, reject) => {
+    child.once("spawn", resolve);
+    child.once("error", () => reject(Error("cli_spawn_failed")));
+  });
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let sessionId = "";
+  let response = "";
+  let deniedRequests = 0;
+  let toolsSeen = 0;
+  let currentModel: string | undefined;
+  let connection: acp.ClientSideConnection;
+  const deny = async (): Promise<never> => { deniedRequests++; throw Error("probe_access_denied"); };
+  const client: acp.Client = {
+    requestPermission: async () => { deniedRequests++; return { outcome: { outcome: "cancelled" } }; },
+    readTextFile: deny, writeTextFile: deny, extMethod: deny,
+    extNotification: async () => {},
+    sessionUpdate: async ({ sessionId: id, update }) => {
+      if (id !== sessionId) return;
+      if (update.sessionUpdate === "current_model_update") currentModel = update.currentModelId;
+      if (update.sessionUpdate === "config_option_update") {
+        const model = update.configOptions.find((o: acp.SessionConfigOption) => o.type === "select" &&
+          (options.modelConfigId ? o.id === options.modelConfigId : o.category === "model"));
+        if (model?.type === "select") currentModel = model.currentValue;
+      }
+      if (update.sessionUpdate === "agent_message_chunk" && update.content.type === "text") {
+        response = (response + update.content.text).slice(0, 256);
+      }
+      if (update.sessionUpdate === "tool_call") {
+        toolsSeen++;
+        void connection.cancel({ sessionId }).catch(() => {});
+      }
+    },
+  };
+  connection = new acp.ClientSideConnection(() => client,
+    acp.ndJsonStream(Writable.toWeb(child.stdin), Readable.toWeb(child.stdout) as ReadableStream<Uint8Array>));
+  const disconnected = new Promise<never>((_, reject) => {
+    child.once("error", () => reject(Error("cli_spawn_failed")));
+    void connection.closed.then(() => reject(Error("acp_disconnected")));
+  });
+  try {
+    return await Promise.race([
+      disconnected,
+      new Promise<never>((_, reject) => { timer = setTimeout(() => reject(Error("probe_timeout")), timeoutMs); }),
+      (async () => {
+        const init = await connection.initialize({ protocolVersion: acp.PROTOCOL_VERSION,
+          clientInfo: { name: "antigravity-stage-a-probe", version: "1.0.0" },
+          clientCapabilities: { fs: { readTextFile: false, writeTextFile: false }, terminal: false } });
+        const session = await connection.newSession({ cwd: options.cwd, mcpServers: [] });
+        sessionId = session.sessionId;
+        const selectors = (session.configOptions ?? []).filter((o: acp.SessionConfigOption) => o.type === "select" &&
+          (options.modelConfigId ? o.id === options.modelConfigId : o.category === "model"));
+        if (selectors.length > 1) throw Error("ambiguous_model_selector");
+        const selector = selectors[0];
+        const values = selector?.type === "select" ? selector.options.flatMap((o: acp.SessionConfigSelectOption | acp.SessionConfigSelectGroup) => "group" in o ? o.options : [o]) : [];
+        const models = selector ? values.map((o: acp.SessionConfigSelectOption) => o.value) : (session.models?.availableModels ?? []).map((o: acp.ModelInfo) => o.modelId);
+        const receipt = { at: new Date().toISOString(), stage: "A", loadSession: !!init.agentCapabilities?.loadSession,
+          modelConfigId: selector?.id ?? null, availableModelIds: models,
+          mode: options.modelId ? "invoke" : "discover", modelId: options.modelId ?? null };
+        if (!options.modelId) return { ...receipt, status: "discovered", modelCallVerified: false };
+        if (!models.includes(options.modelId)) throw Error("requested_model_not_advertised");
+        if (selector) {
+          const selected = await connection.setSessionConfigOption({ sessionId, configId: selector.id, value: options.modelId });
+          const confirmed = selected.configOptions.find((o: acp.SessionConfigOption) => o.id === selector.id);
+          if (confirmed?.type !== "select" || confirmed.currentValue !== options.modelId) throw Error("model_selection_unconfirmed");
+          currentModel = confirmed.currentValue;
+        } else {
+          await connection.unstable_setSessionModel({ sessionId, modelId: options.modelId });
+          // Legacy setter acknowledges selection; record this as protocol evidence, not model self-identification.
+          currentModel = options.modelId;
+        }
+        const result = await connection.prompt({ sessionId, prompt: [{ type: "text",
+          text: "Do not use any tools, read files, or run commands. Reply with exactly ACP_PROBE_OK." }] });
+        if (currentModel !== options.modelId) throw Error("model_changed_during_prompt");
+        if (deniedRequests || toolsSeen) throw Error("probe_requested_tools");
+        if (result.stopReason !== "end_turn" || response.trim() !== "ACP_PROBE_OK") throw Error("probe_response_unconfirmed");
+        return { ...receipt, status: "passed", modelCallVerified: true,
+          modelSelectionEvidence: selector ? "config_response" : "legacy_setter_ack",
+          response: "ACP_PROBE_OK", deniedRequests, toolsSeen };
+      })(),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+    await killAgentAndWait(child);
+  }
+}
