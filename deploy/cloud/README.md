@@ -49,3 +49,7 @@ SQLite WAL + synchronous FULL：每批消息与 cursor 同一事务落盘，再�
 先构建并测试，再测试私有socket实际调用、权限拒绝、取消、会话恢复和计量；再本人扫码。先直接 `/new` 验证微信往返，之后配置Key验证自然语言路由。同账号旧poll owner须排除。所有实机证据写事项，不把mock通过标成微信可用。
 
 升级保留版本目录，用 cloud-current 软链接切版本；空闲时停服务、切链接、启动。任务运行中先等待或经用户要求取消，不盲重启。回滚同理，SQLite/凭据/成果保留。停止微信服务不删除登录态；不要关闭既有代理、Codex或监控服务。systemd socket私有不开放公网端口。72小时观察必须单独开始并记录。
+
+## Windows 终端二维码显示不清
+
+`sudo /usr/local/sbin/awei-wechat-login --qr-image-only` 保持扫码进程运行，同时写入私有 `/var/lib/awei-wechat/wechat-login.png`（600）。图片为本机生成的无损 PNG、整数倍像素及四模块白边，无第三方二维码服务。运维可通过现有 SSH 安全取得图片并展示给本人；不要发布到公开网站或提交 Git。刷新二维码会原子替换图片，结束/失败时删除。图片对应短时登录挑战，不包含登录成功后返回的 bot token。微信消息服务仍不会自动启动。

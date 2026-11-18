@@ -2,6 +2,8 @@
 import {mkdir,readFile,chmod} from 'node:fs/promises';
 import path from 'node:path';
 import qrcode from 'qrcode-terminal';
+import {writeFileSync,renameSync,rmSync} from 'node:fs';
+import {loginQrPng} from '../src/cloud/login-qr.js';
 import {login,loadToken} from '../src/weixin/auth.js';
 import {Store} from '../src/cloud/store.js';
 import {CloudController,safeError} from '../src/cloud/controller.js';
@@ -15,7 +17,12 @@ const state=process.env.AWEI_STATE_DIR||'/var/lib/awei-wechat';
 await mkdir(state,{recursive:true,mode:0o700});
 if(process.argv.includes('--login')){
  if(loadToken(state)){console.log('已存在独立微信登录态；未覆盖。先检查服务状态。');process.exit(0);}
- await login({baseUrl:'https://ilinkai.weixin.qq.com',storageDir:state,log:m=>{if(!m.startsWith('Bot ID:'))console.log(m);},renderQrUrl:url=>qrcode.generate(url,{small:true})});
+ const qrFile=path.join(state,'wechat-login.png');
+ try{await login({baseUrl:'https://ilinkai.weixin.qq.com',storageDir:state,log:m=>{if(!m.startsWith('Bot ID:'))console.log(m);},renderQrUrl:url=>{
+  writeFileSync(qrFile+'.new',loginQrPng(url),{mode:0o600});renameSync(qrFile+'.new',qrFile);
+  console.log('清晰二维码图片已生成：'+qrFile);
+  if(!process.argv.includes('--qr-image-only'))qrcode.generate(url,{small:true});
+ }});}finally{rmSync(qrFile,{force:true});rmSync(qrFile+'.new',{force:true});}
  await chmod(path.join(state,'token.json'),0o600);console.log('微信配对已保存；此命令没有启动消息轮询。');process.exit(0);
 }
 const store=new Store(path.join(state,'tasks.sqlite'));await chmod(path.join(state,'tasks.sqlite'),0o600);
