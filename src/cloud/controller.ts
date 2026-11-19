@@ -1,4 +1,5 @@
 import {resultGuidance} from './result-guidance.js';
+import {request as httpRequest} from 'node:http';
 import {randomBytes,randomUUID} from 'node:crypto';
 import {mkdir,writeFile,readdir} from 'node:fs/promises';
 import path from 'node:path';
@@ -21,6 +22,17 @@ export class CloudController {
   const reply=(s:string)=>this.store.enqueue(owner,s);
   try{
    if(text.length>20000)throw Error('request_too_long');
+   if(/^(?:打开主页|打开阿维主页|登录主页|\/home)[。！! ]*$/.test(text)&&process.env.AWEI_HOME_LINK_SOCKET){
+    const url=await new Promise<string>((resolve,reject)=>{
+     const req=httpRequest({socketPath:process.env.AWEI_HOME_LINK_SOCKET,path:'/link',method:'POST',timeout:5000},res=>{
+      let value='';res.setEncoding('utf8');res.on('data',chunk=>{value+=chunk});
+      res.on('end',()=>res.statusCode===200&&/^https:\/\/seanhome\.awiki\.info\/sessions\/#login=[A-Za-z0-9_-]{40,60}$/.test(value)?resolve(value):reject(Error('home_login_unavailable')));
+      res.on('error',()=>reject(Error('home_login_unavailable')));
+     });
+     req.on('timeout',()=>req.destroy());req.on('error',()=>reject(Error('home_login_unavailable')));req.end();
+    });
+    reply('你的阿维私人主页（15 分钟内有效，仅限本人打开一次）：\n'+url);return;
+   }
    const approval=text.match(/^\/(approve|deny) ([a-f0-9]{16})$/);
    if(approval){reply(this.approvals.resolve(owner,approval[2],approval[1]==='approve')?'审批已处理（仅本次请求）。':'审批不存在、已过期或不属于你。');return;}
    const decision=text.match(/^(?:对当前(?:任务|操作|授权)[，,:： ]*)?(不同意|拒绝|同意|批准)[。！!]?$/);
