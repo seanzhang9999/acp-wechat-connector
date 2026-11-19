@@ -9,6 +9,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod";
 import { DedicatedCore } from "../src/workbuddy/core.js";
 import { relayResult } from "../src/workbuddy/results.js";
+import { registerDesktopQueue } from "../src/workbuddy/desktop-queue.js";
 import { RelayJobs } from "../src/workbuddy/jobs.js";
 import { issueTransfer, checkTransfer, consumeTransfer } from "../src/workbuddy/transfer.js";
 const configSchema = z.object({
@@ -72,6 +73,7 @@ async function main() {
   };
   if (owned) initOwner(); // startup already claimed a free lease
   const server = new McpServer({ name: "awei-dedicated-session", version: RELAY_VERSION });
+  registerDesktopQueue(server);
   const result = (value: unknown) => relayResult(value, config.storageDir);
   const standbyError = (claim: ClaimResult) => new Error(`本会话未持有写权限，未执行。${claim.kind === "standby" ? claim.detail : ""} 持有会话可生成转移码（awei_transfer）后，在这里用 awei_acquire 凭码接管；或等其释放（awei_release / 停止桥接模式）后重发本条，沿用同一 receiptId。`);
   server.registerTool("awei_message", { description: "专用会话唯一入口。原样转交每条用户消息、语音转写及附件；同一消息重试沿用 receiptId。空闲时自动取得写权限；被其他会话持有时会拒绝并说明接管方式。不要自行回答或创建 WorkBuddy 业务任务。", inputSchema: {

@@ -12,7 +12,7 @@ test("real stdio connector accepts dedicated help, returns image, and never laun
  const transport=new StdioClientTransport({command:process.execPath,args:["--import","tsx/esm",path.resolve("bin/awei-workbuddy.ts"),cfg],stderr:"pipe"});
  try {
   await client.connect(transport);
-  assert.deepEqual((await client.listTools()).tools.map(t=>t.name).sort(),["awei_acquire","awei_message","awei_poll","awei_release","awei_status","awei_transfer"]);
+  assert.deepEqual((await client.listTools()).tools.map(t=>t.name).sort(),["awei_acquire","awei_desktop_claim","awei_desktop_finish","awei_desktop_pair","awei_message","awei_poll","awei_release","awei_status","awei_transfer"]);
   const parse=(r:any)=>JSON.parse(r.content[0].text);
   let out=parse(await client.callTool({name:"awei_message",arguments:{receiptId:"hello",text:"阿维，你能做什么"}}));
   for(let i=0;i<50&&out.state==="running";i++){await new Promise(r=>setTimeout(r,20));out=parse(await client.callTool({name:"awei_poll",arguments:{receiptId:"hello"}}));}
@@ -46,7 +46,7 @@ test("MCP release writes response before exiting and CLI release uses live contr
   const secondTransport=new StdioClientTransport({command:process.execPath,args:["--import","tsx/esm",path.resolve("bin/awei-workbuddy.ts"),cfg],stderr:"pipe"});
   try{
    await second.connect(secondTransport);
-   assert.deepEqual((await second.listTools()).tools.map(t=>t.name).sort(),["awei_acquire","awei_message","awei_poll","awei_release","awei_status","awei_transfer"]);
+   assert.deepEqual((await second.listTools()).tools.map(t=>t.name).sort(),["awei_acquire","awei_desktop_claim","awei_desktop_finish","awei_desktop_pair","awei_message","awei_poll","awei_release","awei_status","awei_transfer"]);
    const standby=parse(await second.callTool({name:"awei_status",arguments:{}}));
    assert.equal(standby.mode,"standby");
    assert.match(await callError(second,"awei_message",{receiptId:"x",text:"hi"}),/写权限/);
