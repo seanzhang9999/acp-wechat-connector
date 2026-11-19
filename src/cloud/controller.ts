@@ -22,15 +22,17 @@ export class CloudController {
   const reply=(s:string)=>this.store.enqueue(owner,s);
   try{
    if(text.length>20000)throw Error('request_too_long');
-   if(/^(?:打开主页|打开阿维主页|登录主页|\/home)[。！! ]*$/.test(text)&&process.env.AWEI_HOME_LINK_SOCKET){
+   const homeCode=text.match(/^登录主页\s+([0-9a-f]{10})[。！! ]*$/i);
+   if((homeCode||/^(?:打开主页|打开阿维主页|登录主页|\/home)[。！! ]*$/.test(text))&&process.env.AWEI_HOME_LINK_SOCKET){
     const url=await new Promise<string>((resolve,reject)=>{
-     const req=httpRequest({socketPath:process.env.AWEI_HOME_LINK_SOCKET,path:'/link',method:'POST',timeout:5000},res=>{
+     const req=httpRequest({socketPath:process.env.AWEI_HOME_LINK_SOCKET,path:homeCode?'/confirm/'+homeCode[1].toUpperCase():'/link',method:'POST',timeout:5000},res=>{
       let value='';res.setEncoding('utf8');res.on('data',chunk=>{value+=chunk});
-      res.on('end',()=>res.statusCode===200&&/^https:\/\/seanhome\.awiki\.info\/sessions\/#login=[A-Za-z0-9_-]{40,60}$/.test(value)?resolve(value):reject(Error('home_login_unavailable')));
+      res.on('end',()=>res.statusCode===200&&(homeCode?['confirmed','expired'].includes(value):/^https:\/\/seanhome\.awiki\.info\/sessions\/#login=[A-Za-z0-9_-]{40,60}$/.test(value))?resolve(value):reject(Error('home_login_unavailable')));
       res.on('error',()=>reject(Error('home_login_unavailable')));
      });
      req.on('timeout',()=>req.destroy());req.on('error',()=>reject(Error('home_login_unavailable')));req.end();
     });
+    if(homeCode){reply(url==='confirmed'?'已确认这次网页登录，可以回到原浏览器。':'验证码已过期或已使用，请在打开的主页重新申请。');return;}
     reply('你的阿维私人主页（15 分钟内有效，仅限本人打开一次）：\n'+url);return;
    }
    const approval=text.match(/^\/(approve|deny) ([a-f0-9]{16})$/);
